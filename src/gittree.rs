@@ -3,10 +3,20 @@ use bytes::BytesMut;
 use sha2::Digest;
 use std::fs;
 use std::io;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+#[derive(Debug, PartialEq)]
 struct Hash([u8; 32]);
+
+impl Hash {
+    fn from_hex<S: AsRef<[u8]>>(hex: S) -> Result<Self, hex::FromHexError> {
+        let mut out = [0u8; 32];
+        hex::decode_to_slice(hex, &mut out)?;
+        Ok(Self(out))
+    }
+}
 
 fn hash_of_stream<R>(reader: &mut R, claimed_size: u64) -> Result<Hash, io::Error>
 where
@@ -34,14 +44,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
     #[test]
-    fn hash_blob_fixture() {
+    fn test_hash_blob_fixture() {
         let hash = hash_of_stream(&mut io::Cursor::new(b"a file\n"), 7).expect("hash to succeed");
         assert_eq!(
             hex::encode(&hash.0),
             "2909489adcb095aa795a9a7e6d92db735d0a0ced0782c43496675bdb7beec3ce"
         );
+    }
+
+    #[rstest]
+    #[case("fixtures/alpha/a_file", Hash::from_hex("2909489adcb095aa795a9a7e6d92db735d0a0ced0782c43496675bdb7beec3ce").expect(""))]
+    fn test_hash_of_path(#[case] path: String, #[case] expected: Hash) {
+        assert_eq!(expected, hash_of_path(path).expect("no io errors"))
     }
 }
 
@@ -50,7 +67,7 @@ fn hash_of_path<P: AsRef<Path>>(path: P) -> Result<Hash, io::Error> {
     // FileType isn't an enum (imagine: its membership size would vary per platform if it was!)
     // so working with it ends up being a series of unappealing "if" blocks rather than a nice clean exhaustive match.
     if metadata.is_file() {
-        todo!()
+        return Ok(hash_of_stream(&mut fs::File::open(path)?, metadata.size())?);
     }
     if metadata.is_symlink() {
         todo!()
