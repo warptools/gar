@@ -89,7 +89,11 @@ fn hash_of_path<P: AsRef<Path>>(path: P) -> Result<Hash, io::Error> {
         return Ok(hash_of_stream(&mut fs::File::open(path)?, metadata.size())?);
     }
     if metadata.is_symlink() {
-        todo!()
+        // Surprising number of SLOC needed here for lifetime reasons.
+        let target = fs::read_link(path)?;
+        let mut foo = target.as_os_str().as_encoded_bytes();
+        let size = foo.len().try_into().expect("int size nonsense");
+        return Ok(hash_of_stream(&mut foo, size)?);
     }
     if metadata.is_dir() {
         let mut entries = fs::read_dir(path)?.collect::<Result<Vec<_>, io::Error>>()?;
