@@ -108,7 +108,7 @@ fn hash_of_path<P: AsRef<Path>>(path: P) -> Result<Hash, io::Error> {
             // First write the type info.
             if ft.is_file() {
                 // Asking if it's executable is rather graceful in Rust...
-                if ent.metadata()?.permissions().mode() & 0x111 > 0 {
+                if ent.metadata()?.permissions().mode() & 0o111 > 0 {
                     buf.put(&b"100755 "[..])
                 } else {
                     buf.put(&b"100644 "[..])
@@ -127,8 +127,6 @@ fn hash_of_path<P: AsRef<Path>>(path: P) -> Result<Hash, io::Error> {
             buf.put(&hash.0[..])
             // Somewhat shockingly, there's no further delimiter here.  The hash length is necessarily hardcoded by this absense.
         }
-
-        eprintln!("debug: tree buff is -->{buf:?}<--");
 
         // Ultimately: hash the preamble and feed the buffer and finalize.
         let mut hasher = sha2::Sha256::new();
