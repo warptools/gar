@@ -9,7 +9,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 #[derive(PartialEq)]
-struct Hash([u8; 32]);
+pub struct Hash([u8; 32]);
 
 impl Debug for Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -18,14 +18,14 @@ impl Debug for Hash {
 }
 
 impl Hash {
-    fn from_hex<S: AsRef<[u8]>>(hex: S) -> Result<Self, hex::FromHexError> {
+    pub fn from_hex<S: AsRef<[u8]>>(hex: S) -> Result<Self, hex::FromHexError> {
         let mut out = [0u8; 32];
         hex::decode_to_slice(hex, &mut out)?;
         Ok(Self(out))
     }
 }
 
-fn hash_of_stream<R>(reader: &mut R, claimed_size: u64) -> Result<Hash, io::Error>
+pub fn hash_of_stream<R>(reader: &mut R, claimed_size: u64) -> Result<Hash, io::Error>
 where
     R: io::Read + ?Sized,
 {
@@ -81,7 +81,7 @@ mod tests {
     }
 }
 
-fn hash_of_path<P: AsRef<Path>>(path: P) -> Result<Hash, io::Error> {
+pub fn hash_of_path<P: AsRef<Path>>(path: P) -> Result<Hash, io::Error> {
     let metadata = path.as_ref().symlink_metadata()?;
     // FileType isn't an enum (imagine: its membership size would vary per platform if it was!)
     // so working with it ends up being a series of unappealing "if" blocks rather than a nice clean exhaustive match.
