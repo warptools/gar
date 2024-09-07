@@ -9,6 +9,7 @@ edition = "2021"
 sha2 = "*"
 hex = "*"
 bytes = "*"
+tempdir = "*"
 
 [dev-dependencies]
 rstest = "*"

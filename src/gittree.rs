@@ -23,6 +23,10 @@ impl Hash {
         hex::decode_to_slice(hex, &mut out)?;
         Ok(Self(out))
     }
+
+    pub fn as_hex(&self) -> String {
+        return hex::encode(self.0);
+    }
 }
 
 pub fn hash_of_stream<R>(reader: &mut R, claimed_size: u64) -> Result<Hash, io::Error>
@@ -46,6 +50,14 @@ where
     }
     let hash_bytes = hasher.finalize();
     Ok(Hash(hash_bytes.into()))
+}
+
+pub fn hash_of_symlink<P: AsRef<Path>>(path: P) -> Result<Hash, io::Error> {
+    // Surprising number of SLOC needed here for lifetime reasons.
+    let target = fs::read_link(path)?;
+    let mut foo = target.as_os_str().as_encoded_bytes();
+    let size = foo.len().try_into().expect("int size nonsense");
+    return Ok(hash_of_stream(&mut foo, size)?);
 }
 
 #[cfg(test)]
@@ -89,11 +101,7 @@ pub fn hash_of_path<P: AsRef<Path>>(path: P) -> Result<Hash, io::Error> {
         return Ok(hash_of_stream(&mut fs::File::open(path)?, metadata.size())?);
     }
     if metadata.is_symlink() {
-        // Surprising number of SLOC needed here for lifetime reasons.
-        let target = fs::read_link(path)?;
-        let mut foo = target.as_os_str().as_encoded_bytes();
-        let size = foo.len().try_into().expect("int size nonsense");
-        return Ok(hash_of_stream(&mut foo, size)?);
+        return hash_of_symlink(path)
     }
     if metadata.is_dir() {
         let mut entries = fs::read_dir(path)?.collect::<Result<Vec<_>, io::Error>>()?;
