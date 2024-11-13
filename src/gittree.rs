@@ -60,6 +60,62 @@ pub fn hash_of_symlink<P: AsRef<Path>>(path: P) -> Result<Hash, io::Error> {
     return Ok(hash_of_stream(&mut foo, size)?);
 }
 
+pub struct TreeHashAccumulator {
+    buf: BytesMut,
+}
+
+impl TreeHashAccumulator {
+    pub fn new(expected_entries: usize) -> Self {
+        // We have to buffer descriptions of all children, because the git format writes the serial size of that in a header.
+        // Start accumulating the buffer.
+        // We can make a pretty good guess how big it'll need to be, at most:
+        let size_per_ent = 7 + 255 + 1 + 32;
+        Self {
+            buf: BytesMut::with_capacity(expected_entries * size_per_ent),
+        }
+    }
+
+    pub fn append_file(&mut self, entry_name: &[u8], hash: &Hash) {
+        self.buf.put(&b"100644 "[..]);
+        self.append_common(entry_name, hash);
+    }
+    pub fn append_executable(&mut self, entry_name: &[u8], hash: &Hash) {
+        self.buf.put(&b"100755 "[..]);
+        self.append_common(entry_name, hash);
+    }
+    pub fn append_symlink(&mut self, entry_name: &[u8], hash: &Hash) {
+        self.buf.put(&b"120000 "[..]);
+        self.append_common(entry_name, hash);
+    }
+    pub fn append_dir(&mut self, entry_name: &[u8], hash: &Hash) {
+        self.buf.put(&b"40000 "[..]); // This certainly looks like a typo, doesn't it!  But, indeed... this is exactly how git encodes this.
+        self.append_common(entry_name, hash);
+    }
+    fn append_common(&mut self, entry_name: &[u8], hash: &Hash) {
+        // The type indicator should've just been written by one of the public functions before calling this.
+        // Now the name (and a terminating delimiter).
+        self.buf.put(entry_name);
+        self.buf.put_u8(0);
+        // Now its hash.
+        self.buf.put(&hash.0[..])
+        // Somewhat shockingly, there's no further delimiter here.  The hash length is necessarily hardcoded by this absence.
+        // Not how I would've designed it.  But it's what git did and still does do.
+    }
+
+    pub fn finish(self) -> Hash {
+        // To produce the treehash:
+        // first compute the preamble and size header, and feed that to the hasher;
+        // then feed whole rest of the buffer to the hasher, and then and finalize.
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(b"tree ");
+        hasher.update(format!("{}", self.buf.len()));
+        hasher.update([0]);
+        hasher.update(self.buf);
+        let hash_bytes = hasher.finalize();
+        return Hash(hash_bytes.into());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,53 +157,38 @@ pub fn hash_of_path<P: AsRef<Path>>(path: P) -> Result<Hash, io::Error> {
         return Ok(hash_of_stream(&mut fs::File::open(path)?, metadata.size())?);
     }
     if metadata.is_symlink() {
-        return hash_of_symlink(path)
+        return hash_of_symlink(path);
     }
     if metadata.is_dir() {
         let mut entries = fs::read_dir(path)?.collect::<Result<Vec<_>, io::Error>>()?;
         entries.sort_by(|a, b| a.path().partial_cmp(&b.path()).unwrap());
 
         // We have to buffer descriptions of all children, because the git format writes the serial size of that in a header.
-        // Start accumulating the buffer.
-        // We can make a pretty good guess how big it'll need to be, at most:
-        let size_per_ent = 7 + 255 + 1 + 32;
-        let mut buf = BytesMut::with_capacity(entries.len() * size_per_ent);
+        let mut tha = TreeHashAccumulator::new(entries.len());
 
         // For each entry: recurse on hashing; append buffer.
         for ent in entries.iter() {
             let hash = hash_of_path(ent.path())?;
             let ft = ent.file_type()?;
-            // First write the type info.
+            let file_name = ent.file_name(); // for lifetime purposes.
+            let fnb = file_name.as_os_str().as_encoded_bytes();
+
             if ft.is_file() {
                 // Asking if it's executable is rather graceful in Rust...
                 if ent.metadata()?.permissions().mode() & 0o111 > 0 {
-                    buf.put(&b"100755 "[..])
+                    tha.append_executable(fnb, &hash);
                 } else {
-                    buf.put(&b"100644 "[..])
+                    tha.append_file(fnb, &hash);
                 }
             } else if ft.is_symlink() {
-                buf.put(&b"120000 "[..])
+                tha.append_symlink(fnb, &hash);
             } else if ft.is_dir() {
-                buf.put(&b"40000 "[..]) // This certainly looks like a typo, doesn't it!  But, indeed... this is exactly how git encodes this.
+                tha.append_dir(fnb, &hash);
             } else {
                 panic!("unknown file type")
             }
-            // Now the name (and a terminating delimiter).
-            buf.put::<&[u8]>(ent.file_name().as_os_str().as_encoded_bytes());
-            buf.put_u8(0);
-            // Now its hash.
-            buf.put(&hash.0[..])
-            // Somewhat shockingly, there's no further delimiter here.  The hash length is necessarily hardcoded by this absense.
         }
-
-        // Ultimately: hash the preamble and feed the buffer and finalize.
-        let mut hasher = sha2::Sha256::new();
-        hasher.update(b"tree ");
-        hasher.update(format!("{}", buf.len()));
-        hasher.update([0]);
-        hasher.update(buf);
-        let hash_bytes = hasher.finalize();
-        return Ok(Hash(hash_bytes.into()));
+        return Ok(tha.finish());
     }
     panic!("unknown file type")
 }
