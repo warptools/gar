@@ -10,6 +10,7 @@ sha2 = "*"
 hex = "*"
 bytes = "*"
 tempdir = "*"
+clap = { version = "*", features = ["derive"] }
 
 [dev-dependencies]
 rstest = "*"
