@@ -2,7 +2,7 @@ use std::fs;
 use std::io;
 use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::gittree;
 use crate::repo;
@@ -39,27 +39,52 @@ pub fn add(
     let hash = w.add_recurse(Path::new(""), &fs::metadata(w.scan_root)?)?;
 
     // The final commit: move the whole wiptree into CAS place.
-    let treecas_result = fs::rename(&td, repo.treecas_path().join(hash.as_hex()));
+    let dest_path: PathBuf = repo.treecas_path().join(hash.as_hex());
+    let treecas_result = fs::rename(&td, &dest_path);
+
+    // The error handling for this last step, however, is... wild.
+    //
+    // Goal: if the rename failed, because the target exists, that's *fine*;
+    // because we're a CAS system, that just means someone else raced us
+    // to manifesting that result already, and that's _fine_.
+    //
+    // Actual: uh, well.  Oof.
+    // As far as I can tell, telling when a directory rename fails because target exists
+    // is literally programmatically indistinguishable in the rust stdlib as of today on stable.
+    // So... what we're going to do is, for _any_ error, just check if the target path exists,
+    // and if it does, we'll discard the error (regardless of what it was).
+    //
+    // (r u serious??  Yeah, yeah I am.  fs::rename doesn't return an
+    // `io::ErrorKind::AlreadyExists`, which is what you might expect.
+    // Instead, it returns `io::ErrorKind::DirectoryNotEmpty`.  Which...
+    // is illegal to talk about, because it's behind the 'io_error_more' unstable feature
+    // (see <https://github.com/rust-lang/rust/issues/86442>).
+    // I don't see any alternative route to the data, except for maybe dumping the debug
+    // format into a buffer and matching on strings, which is heinous.
+    // I'm also not willing to start using an unstable compiler for just this.
+    // So.
+    //
+    // Fortunately, checking if the target directory already exists *after* our move attempt
+    // is fine: although it _smells_ like a TOCTOU, we're in a situation where it's fine.
+    // We don't care about the ability to distinguish if this process succeeded; so long as
+    // *someone* succeeded in making that data manifest, we're happy.  And because a CAS
+    // system is append-only (outside of GC), there's no relevant race conditions in sight.
+    //
+    // The other way to attack this might be to switch to the 'rustix' crate
+    // and attempt to leave rust's stdlib fs API behind entirely.  Tempting.
+    // But a bridge too far for me today.
     match treecas_result {
         Ok(_) => {} // cool
         Err(e) => {
-            if e.kind() == io::ErrorKind::DirectoryNotEmpty {
-                // No action required: the tempdir will be cleaned up when the 'td' value drops.
-
-                // FIXME: ????  This doesn't get engaged???
-                // The error code I get is "DirectoryNotEmpty"??
-                // you'd think this would be an "AlreadyExists", but, it is, for some reason, this.
-                // oh and "DirectoryNotEmpty" is being an unstable library feature??  what?????
-                // so i get this value and also i am not allowed to speak of it???? rust?????????
-                //
-                // and you can't use `#![feature(io_error_more)]` when your compiler is the stable channel,
-                // and i'm not getting into that circus,
-                // so, okay...
-                // i guess we'll print the debug format into a buffer and string match it???
-                // I cannot believe Rust has left me with this.  This is clownshoes.
-                // One of the few foolproof tests of API design idiocy is if you can get something from the debug strings and not from the API itself.
-                // I thought Rust would be above this kind of charades.
-            } else {
+            // Neither of these two conditions is valid:
+            //   - `e.kind() == io::ErrorKind::AlreadyExists`
+            //      --> is what I expected, but is not actually what the fs package produces.
+            //   - `e.kind() == io::ErrorKind::DirectoryNotEmpty`
+            //      --> is what we really see, except its hidden behind `#![feature(io_error_more)]`.
+            //
+            // So... Check the actual outcomes instead.
+            // Return the error from renaming only if the destination doesn't exist.
+            if !dest_path.exists() {
                 return Err(e);
             }
         }
