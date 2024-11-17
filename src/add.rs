@@ -181,7 +181,6 @@ impl AddWork<'_> {
         // BRANCH: are we in paranoia mode, or are we hardlinking orignals and trusting in a lack of mutation?
         // Note that in the copy mode, we use `io::copy` rather than `fs::copy`, because the latter puts work into copying permissions, attribs, etc, and we have no need for that.
         let blobcas_path = self.blobcas_root.join(hash.as_hex());
-        println!("plz to maek file: {:?}", blobcas_path);
         let blobcas_result: io::Result<_> = match self.faithmode {
             FaithMode::Copy => {
                 todo!("i sure wish our hashing and copying could work on one read pass")
@@ -204,11 +203,6 @@ impl AddWork<'_> {
         };
 
         // Second: hardlink a new entry in the treecas to the blobcas.
-        println!(
-            "plz to hardlink: {:?} <- {:?}",
-            self.scan_root.join(path),
-            self.wiptree_root.join(path)
-        );
         fs::hard_link(&blobcas_path, self.wiptree_root.join(path))?;
 
         // And return the hash so dir treehashing can accumulate.
@@ -245,8 +239,6 @@ impl AddWork<'_> {
             let file_name = ent.file_name(); // for lifetime purposes.
             let fnb = file_name.as_os_str().as_encoded_bytes();
 
-            println!("henlo: {:?}", &path.join(&file_name));
-
             if ft.is_file() {
                 let hash = self.add_recurse_file(&path.join(&file_name), &ent.metadata()?)?;
                 if ent.metadata()?.permissions().mode() & 0o111 > 0 {
@@ -263,7 +255,6 @@ impl AddWork<'_> {
                 // Go ahead and make the path of the same name in the temp new treecas.
                 // (This happens here because at the very root, we don't need to do it, because we started with a tempdir there already.)
                 let wip_path = self.wiptree_root.join(path.join(&file_name));
-                println!("mkdir: {:?}", &wip_path);
                 std::fs::create_dir(wip_path)?;
                 // Recurse.
                 let hash = self.add_recurse_dir(&path.join(&file_name))?;
