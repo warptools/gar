@@ -1,6 +1,3 @@
-use std::fs;
-use std::process;
-
 mod add;
 mod cmds;
 mod gittree;
@@ -11,6 +8,8 @@ mod clap {
     pub use clap::Parser;
 }
 use clap::Parser;
+
+use std::process;
 
 fn main() {
     let root_args = match cmds::Root::try_parse_from(std::env::args_os()) {
@@ -35,6 +34,7 @@ fn main() {
     };
     let repo = repo::find_repo_from(&repo_search_start)
         .expect("io error while searching for existing repos");
+
     match root_args.subcommand {
         cmds::Subcommands::Init(_) => match repo {
             Some(repo) => {
@@ -49,9 +49,25 @@ fn main() {
                 process::exit(0);
             }
         },
-        cmds::Subcommands::Add(args) => {
-            println!("hello add: {:?}", args.path);
-        }
+        cmds::Subcommands::Add(args) => match repo {
+            Some(repo) => {
+                repo.create_dir_all().expect("creating repo dirs");
+                match add::add(&repo, args.path, add::FaithMode::LinkOriginals) {
+                    Ok(hash) => {
+                        println!("{}", hash.as_hex());
+                        process::exit(0);
+                    }
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        process::exit(5);
+                    }
+                }
+            }
+            None => {
+                eprintln!("this subcommand needs to be run within, or pointed to, a gar repo");
+                process::exit(3);
+            }
+        },
     };
     // let r = repo::Repo::new("/tmp");
     // r.create_dir_all().expect("waa");
