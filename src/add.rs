@@ -43,7 +43,7 @@ pub fn add(
     match treecas_result {
         Ok(_) => {} // cool
         Err(e) => {
-            if e.kind() == io::ErrorKind::AlreadyExists {
+            if e.kind() == io::ErrorKind::DirectoryNotEmpty {
                 // No action required: the tempdir will be cleaned up when the 'td' value drops.
 
                 // FIXME: ????  This doesn't get engaged???
@@ -51,8 +51,15 @@ pub fn add(
                 // you'd think this would be an "AlreadyExists", but, it is, for some reason, this.
                 // oh and "DirectoryNotEmpty" is being an unstable library feature??  what?????
                 // so i get this value and also i am not allowed to speak of it???? rust?????????
+                //
+                // and you can't use `#![feature(io_error_more)]` when your compiler is the stable channel,
+                // and i'm not getting into that circus,
+                // so, okay...
+                // i guess we'll print the debug format into a buffer and string match it???
+                // I cannot believe Rust has left me with this.  This is clownshoes.
+                // One of the few foolproof tests of API design idiocy is if you can get something from the debug strings and not from the API itself.
+                // I thought Rust would be above this kind of charades.
             } else {
-                println!("what is this??? {:?}", e);
                 return Err(e);
             }
         }
