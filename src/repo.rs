@@ -3,26 +3,36 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 pub struct Repo {
+    /// Path as originally specified.
+    /// Includes ".gar" (unless this is a bare repo).
+    /// Usually this used in messages to the user.
     path: PathBuf,
 
-    // All of the paths below are suffixes of 'self.path', but used so frequently we create them once.
+    /// Absolute and canonicalized version of the path.
+    /// This is used to do checks like if other files we might walk are within the repo root.
+    /// (Yes, it would be better to do that with handle-based APIs, but alas, those are in short supply.)
+    path_abs: PathBuf,
+
+    // All of the paths below are suffixes of 'self.path_abs', but used so frequently we create them once.
     blobcas_path: PathBuf,
     treecas_path: PathBuf,
     treeidx_path: PathBuf,
 }
 
 impl Repo {
-    pub fn new(root_path: impl AsRef<Path>) -> Self {
+    pub fn new(root_path: impl AsRef<Path>) -> Result<Self, io::Error> {
         Self::new_bare(root_path.as_ref().join(".gar"))
     }
-    pub fn new_bare(root_path: impl AsRef<Path>) -> Self {
+    pub fn new_bare(root_path: impl AsRef<Path>) -> Result<Self, io::Error> {
         let path = root_path.as_ref().to_owned();
-        Repo {
-            path: path.clone(), // Silly, but struct initialization order is syntactically annoying.
-            blobcas_path: (&path).join("blobcas"),
-            treecas_path: (&path).join("treecas"),
-            treeidx_path: (&path).join("treeidx"),
-        }
+        let path_abs = fs::canonicalize(&path)?;
+        Ok(Repo {
+            path,
+            blobcas_path: (&path_abs).join("blobcas"),
+            treecas_path: (&path_abs).join("treecas"),
+            treeidx_path: (&path_abs).join("treeidx"),
+            path_abs,
+        })
     }
 
     pub fn create_dir_all(&self) -> io::Result<()> {
@@ -35,6 +45,9 @@ impl Repo {
 
     pub fn repo_path(&self) -> &Path {
         &self.path
+    }
+    pub fn repo_path_abs(&self) -> &Path {
+        &self.path_abs
     }
     pub fn blobcas_path(&self) -> &Path {
         &self.blobcas_path
@@ -54,7 +67,7 @@ pub fn find_repo() -> Result<Option<Repo>, io::Error> {
 pub fn find_repo_from(p: impl AsRef<Path>) -> Result<Option<Repo>, io::Error> {
     let path = p.as_ref();
     if path.join(".gar").exists() {
-        return Ok(Some(Repo::new(path)));
+        return Ok(Some(Repo::new(path)?));
     }
     match path.parent() {
         Some(p) => return find_repo_from(p),

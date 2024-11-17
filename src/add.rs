@@ -26,8 +26,8 @@ pub fn add(
     // Gar may just end up forbidding this because I don't know what else it should do.
 
     let w = AddWork {
+        repo,
         scan_root: path.as_ref(),
-        blobcas_root: repo.blobcas_path(),
         wiptree_root: td.path(),
         faithmode,
     };
@@ -128,8 +128,8 @@ pub enum FaithMode {
 
 /// Bundles up all the parameters we'd pass down in recursion.
 struct AddWork<'a> {
+    repo: &'a repo::Repo,
     scan_root: &'a Path,
-    blobcas_root: &'a Path,
     wiptree_root: &'a Path,
     faithmode: FaithMode,
 }
@@ -180,7 +180,7 @@ impl AddWork<'_> {
         // First: Populate the blobcas, either by copy or by hardlink.
         // BRANCH: are we in paranoia mode, or are we hardlinking orignals and trusting in a lack of mutation?
         // Note that in the copy mode, we use `io::copy` rather than `fs::copy`, because the latter puts work into copying permissions, attribs, etc, and we have no need for that.
-        let blobcas_path = self.blobcas_root.join(hash.as_hex());
+        let blobcas_path = self.repo.blobcas_path().join(hash.as_hex());
         let blobcas_result: io::Result<_> = match self.faithmode {
             FaithMode::Copy => {
                 todo!("i sure wish our hashing and copying could work on one read pass")
@@ -252,6 +252,12 @@ impl AddWork<'_> {
                 let hash = self.add_recurse_symlink(&path.join(&file_name))?;
                 tha.append_symlink(fnb, &hash);
             } else if ft.is_dir() {
+                // Special case: if we're encounter the repo itself: do not add that!
+                // (This is not super uncommon: "gar add ." is generally expected to DTRT.)
+                if fs::canonicalize(ent.path())? == self.repo.repo_path_abs() {
+                    continue;
+                }
+
                 // Go ahead and make the path of the same name in the temp new treecas.
                 // (This happens here because at the very root, we don't need to do it, because we started with a tempdir there already.)
                 let wip_path = self.wiptree_root.join(path.join(&file_name));

@@ -43,7 +43,7 @@ fn main() {
                 process::exit(4);
             }
             None => {
-                let r = repo::Repo::new(repo_search_start);
+                let r = repo::Repo::new(repo_search_start).expect("opening repo");
                 r.create_dir_all().expect("creating repo dirs");
                 println!("gar repo created at {:?}", r.repo_path());
                 process::exit(0);
