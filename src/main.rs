@@ -1,4 +1,5 @@
 use std::fs;
+use std::process;
 
 mod add;
 mod cmds;
@@ -21,17 +22,33 @@ fn main() {
             ) =>
         {
             println!("{e}");
-            std::process::exit(0);
+            process::exit(0);
         }
         Err(e) => {
             eprintln!("{e}");
-            std::process::exit(1);
+            process::exit(1);
         }
     };
+    let repo_search_start = match root_args.repo {
+        Some(path) => path,
+        None => std::env::current_dir().expect("must be able to find cwd"),
+    };
+    let repo = repo::find_repo_from(&repo_search_start)
+        .expect("io error while searching for existing repos");
     match root_args.subcommand {
-        cmds::Subcommands::Init(_) => {
-            println!("hello init");
-        }
+        cmds::Subcommands::Init(_) => match repo {
+            Some(repo) => {
+                println!("warning: a repo already exists in this dir or its parent");
+                println!("gar repo exists at {:?}", repo.repo_path());
+                process::exit(4);
+            }
+            None => {
+                let r = repo::Repo::new(repo_search_start);
+                r.create_dir_all().expect("creating repo dirs");
+                println!("gar repo created at {:?}", r.repo_path());
+                process::exit(0);
+            }
+        },
         cmds::Subcommands::Add(args) => {
             println!("hello add: {:?}", args.path);
         }

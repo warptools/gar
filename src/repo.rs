@@ -46,3 +46,18 @@ impl Repo {
         &self.treeidx_path
     }
 }
+
+pub fn find_repo() -> Result<Option<Repo>, io::Error> {
+    return find_repo_from(std::env::current_dir()?);
+}
+
+pub fn find_repo_from(p: impl AsRef<Path>) -> Result<Option<Repo>, io::Error> {
+    let path = p.as_ref();
+    if path.join(".gar").exists() {
+        return Ok(Some(Repo::new(path)));
+    }
+    match path.parent() {
+        Some(p) => return find_repo_from(p),
+        None => return Ok(None),
+    }
+}

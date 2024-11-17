@@ -5,6 +5,13 @@ pub struct Root {
     #[command(subcommand)]
     pub subcommand: Subcommands,
 
+    /// Path to the Gar repo to operate on.
+    /// When not provided, it is detected by searching up from the cwd.
+    ///
+    /// Gar repos are always indicated by a ".gar" directory.
+    #[arg(long)]
+    pub repo: Option<PathBuf>,
+
     /// Raise verbosity by specifying this flag repeatedly.
     #[arg(short='v', long, action = clap::ArgAction::Count)]
     pub verbosity: u8,
