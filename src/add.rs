@@ -178,9 +178,19 @@ impl AddWork<'_> {
         )?;
 
         // First: Populate the blobcas, either by copy or by hardlink.
+        // There is one piece of data we have to represent in the blob name beyond the hash itself:
+        // because git stores the executable bit in the tree, rather than the blob header itself,
+        // we have to store the executable bit as a suffix of the blobhash.
+        // (We can't just add executable bit back onto things in the treecas, because that's...
+        // not how hardlinks work, unfortunately.  Oh how I wish it was!  But, nope.)
+        let attrib_suffix = if path_meta.permissions().mode() & 0o111 > 0 {
+            "-x"
+        } else {
+            ""
+        };
+        let blobcas_path = self.repo.blobcas_path().join(hash.as_hex() + attrib_suffix);
         // BRANCH: are we in paranoia mode, or are we hardlinking orignals and trusting in a lack of mutation?
         // Note that in the copy mode, we use `io::copy` rather than `fs::copy`, because the latter puts work into copying permissions, attribs, etc, and we have no need for that.
-        let blobcas_path = self.repo.blobcas_path().join(hash.as_hex());
         let blobcas_result: io::Result<_> = match self.faithmode {
             FaithMode::Copy => {
                 todo!("i sure wish our hashing and copying could work on one read pass")
