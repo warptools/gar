@@ -27,6 +27,7 @@ pub fn add(
 
     let w = AddWork {
         repo,
+        repo_ino: fs::metadata(repo.repo_path())?.ino(),
         scan_root: path.as_ref(),
         wiptree_root: td.path(),
         faithmode,
@@ -129,6 +130,7 @@ pub enum FaithMode {
 /// Bundles up all the parameters we'd pass down in recursion.
 struct AddWork<'a> {
     repo: &'a repo::Repo,
+    repo_ino: u64,
     scan_root: &'a Path,
     wiptree_root: &'a Path,
     faithmode: FaithMode,
@@ -264,7 +266,7 @@ impl AddWork<'_> {
             } else if ft.is_dir() {
                 // Special case: if we're encounter the repo itself: do not add that!
                 // (This is not super uncommon: "gar add ." is generally expected to DTRT.)
-                if fs::canonicalize(ent.path())? == self.repo.repo_path_abs() {
+                if ent.metadata()?.ino() == self.repo_ino {
                     continue;
                 }
 

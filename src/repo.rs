@@ -8,12 +8,7 @@ pub struct Repo {
     /// Usually this used in messages to the user.
     path: PathBuf,
 
-    /// Absolute and canonicalized version of the path.
-    /// This is used to do checks like if other files we might walk are within the repo root.
-    /// (Yes, it would be better to do that with handle-based APIs, but alas, those are in short supply.)
-    path_abs: PathBuf,
-
-    // All of the paths below are suffixes of 'self.path_abs', but used so frequently we create them once.
+    // All of the paths below are suffixes of 'self.path', but used so frequently we create them once.
     blobcas_path: PathBuf,
     treecas_path: PathBuf,
     treeidx_path: PathBuf,
@@ -25,13 +20,11 @@ impl Repo {
     }
     pub fn new_bare(root_path: impl AsRef<Path>) -> Result<Self, io::Error> {
         let path = root_path.as_ref().to_owned();
-        let path_abs = fs::canonicalize(&path)?;
         Ok(Repo {
+            blobcas_path: (&path).join("blobcas"),
+            treecas_path: (&path).join("treecas"),
+            treeidx_path: (&path).join("treeidx"),
             path,
-            blobcas_path: (&path_abs).join("blobcas"),
-            treecas_path: (&path_abs).join("treecas"),
-            treeidx_path: (&path_abs).join("treeidx"),
-            path_abs,
         })
     }
 
@@ -45,9 +38,6 @@ impl Repo {
 
     pub fn repo_path(&self) -> &Path {
         &self.path
-    }
-    pub fn repo_path_abs(&self) -> &Path {
-        &self.path_abs
     }
     pub fn blobcas_path(&self) -> &Path {
         &self.blobcas_path
