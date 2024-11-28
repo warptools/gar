@@ -11,6 +11,12 @@ hex = "*"
 bytes = "*"
 tempdir = "*"
 clap = { version = "*", features = ["derive"] }
+io_tee = "*"
 
 [dev-dependencies]
 rstest = "*"
+criterion = "*"
+
+[[bench]]
+name = "direct_copy"
+harness = false
