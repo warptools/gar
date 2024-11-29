@@ -4,7 +4,9 @@ File Copy Strategy Benchmark Notes
 The Question
 ------------
 
-Is it useful to use the `fs::copy` method, which _may_ internally use some direct copy kernel APIs, worth anything?
+Is using the `fs::copy` method, which _may_ internally use some direct copy kernel APIs, worth anything?
+
+Is using `fs::copy` making any more special actions for files than `io::copy`?
 
 And considering that we need to read a file into memory at least once to hash it,
 do those (maybe) savings of (maybe) using a more direct kernel copy API still win any tugs of war overall,
@@ -14,22 +16,21 @@ considering that they necessitate a second set of `read` syscalls?
 Summary of Data
 ---------------
 
-We do two sets of studies at various file sizes:
-one is of the `fs::copy` vs `io::copy` APIs alone;
-and the other is with a full hashing implemented similarly to how our real program would need to do it
-(but ignoring all the details of git trees, etc; just using sha256 and that's it).
+First of all, question 2 -- is `fs::copy` advantaged over `io::copy` -- is straight up "no".
+Both functions do wizardry when working on files.  Just check the source.
+A study of their performance is still included in the code and stats here,
+but just demonstrates they are in fact effectively the same.
 
-Observing fscopy vs iocopy alone:
-
-- on tmpfs, it doesn't matter, at any scale.
-- on ZFS, it doesn't matter, at any scale.
-- on Ext4... you might be tempted to think it matters, but ext4 is so unpredictable and noisy that statistics involving it are just a joke.
+The more interesting tests are
+a full hashing implemented similarly to how our real program would need to do it
+(but ignoring all the details of git trees, etc; just using sha256 and that's it),
+for both with a copy and separate read, and with an in memory tee.
 
 Observing the difference between fscopy-then-reread-and-hash and using an in-memory tee to hash and copy:
 
 - on tmpfs, it doesn't matter.  Tee is maybe _slightly_ winning but practically within noise margins.
 - on ZFS, it looks like copy-and-reread is slightly faster -- not an asymptote, but by percentages (approximately 19%)... on 10M and above.  Tee is faster on 10k.
-- on Ext4... yeah, these measurements are just insane.  Ext4 is unpredictable beyond reason.
+- on Ext4... it's hard to say: Ext4 seems to be extremely unpredictable under all weather.
 
 (The lack of comprehensible measurements of ext4 is concerning, but see data below.
 If anyone can make sense of this, by all means, please send notes.)
@@ -38,17 +39,19 @@ If anyone can make sense of this, by all means, please send notes.)
 Conclusions
 -----------
 
-- I see no meaningful evidence that the fs::copy of the standard library
-  gets any advantages from its internal `unix::kernel_copy` features on any filesystem I tested.
-- Writing more complex code to do an in-memory tee does not seem to yield any benefits vs doing a second read.
+A copy (which can use special kernel APIs for that purpose) followed by a read for hashing
+appears to be the superior strategy in practice.
 
-I struggle to explain why copy-and-reread would be faster when the fscopy sample alone *isn't*.
-I guess the only plausible theory is... the tee library is not very efficient, or that it results in worse IO pipelining
-(and, that this doesn't matter on a tmpfs, because... the writes are cheaper and don't pipeline stall as much...?).
+This seems surprising (and I'm not sure it's true in ALL cases and constellations of workload, kernel, etc)...
+but it seems that when efficient file copy APIs are encountered, they really pay off.
+If the efficient file copy means *not* doing 2N syscalls for reading and writing each chunk of a file,
+then doing a subsequent fully separate read costs N syscalls, sure, but that's still a win.
+It's not so much a "second" read as it is simply a first one.
+(I suspect that "second" read also tends to be ultracheap because those filesystem blocks are all in cache;
+so, yeah, there's still the kernel context switching costs of the read syscalls, but there probably isn't
+much "real" IO going on underneath that.)
 
-If the above theory is accurate, then the most useful thing to do to make this suite of operations go faster
-might actually be multi-threading.
-(However, that is a whole other series of even more tricky benchmarks.)
+At any rate: this means the simplest code is probably best.  Neato.
 
 
 Data

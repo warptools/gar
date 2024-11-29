@@ -1,17 +1,21 @@
 /*
-The purpose of this file is to probe into if it makes any difference
-to try to use `fs::copy` (so that it can use `unix::kernel_copy` features)
-vs doing fairly dumb shuttling of IO through userspace.
+The purpose of this file is to probe into if it's a better idea to
+do any file copying first, and hashing with a subsequent read;
+or if it's preferable to read, tee in memory, and hash and write at once.
 
-The answer appears to be "no" -- in both directions.
-`fs::copy` doesn't appear to have advantages over `io::copy`.
-And there's mixed evidence on if teeing or vs a separate (arguably duplicate) read has any advantage...
-(if anything, it seems... the opposite).
+Perhaps surprisingly, the result in appears to be:
+copy, and then read again.
+There are kernel APIs for copying files efficiently;
+and that means then a subsequent read for the purpose of hashing
+isn't not so much a "second" read as it is simply a first one.
+Empirically, the "second" read approach is either on par or faster than
+an in-memory tee approach.
 
 See adjacent markdown file of the same basename for more notes and some captured data.
 
 All of this could also be reviewed in contrast with rustix functions, if we add that.
 I haven't studied it yet, but it's possible that crate would offer different IO abstraction levels.
+However, it does seem like both fs::copy and io::copy are already deploying all the wizardry they can.
 
 */
 
@@ -80,13 +84,25 @@ fn fscopy(filename: &str) {
     // results by expressing the higher level intention, and skipping
     // over all the dumb IO of copying bytes in and out of userspace.
     //
-    // In practice, I do not see such gains in this benchmark.
-    // And it's a tad unclear what I'd do if I did see them;
-    // the `fs::copy` function *also* does other work that we... don't want to
-    // (naming copying permissions; minor, but undesired).
+    // However, (see below) it turns out `io::copy` *also* does this.
+    // And the `fs::copy` function does some additional work
+    // (namingly copying permissions) that we don't necessarily desire.
+    //
+    // Comparing `fs::copy` and `io::copy` turns out to be not super interesting,
+    // because they turn into the same thing.  But I leave the benchmarks here
+    // for posterity, comedy, and interest.
     fs::copy(pth(filename), pth("out")).expect("");
 }
 fn iocopy(filename: &str) {
+    // This... turns out not to test what you might thing.
+    // `io::copy` has special powers, too, and detects arguments that are files.
+    // (Furthermore, no, wrapping it in e.g. `io::BufWriter::new()` appears to make
+    // no difference either; the detection and the magic still kicks in, as far as I can tell.)
+    //
+    // `io::copy` calls into `std::sys::pal::unix::kernel_copy::copy_spec`.
+    // This is actually a superset of where `fs::copy` goes with `copy_regular_files`:
+    // `copy_regular_files` gets used inside `copy_spec`,
+    // and subsequently several other fancy tricks (such as sendfile for mmapables) are also tried.
     let mut src = fs::File::open(pth(filename)).expect("");
     let mut dst = fs::File::create(pth("out")).expect("");
     io::copy(&mut src, &mut dst).expect("");
