@@ -3,48 +3,19 @@ The purpose of this file is to probe into if it makes any difference
 to try to use `fs::copy` (so that it can use `unix::kernel_copy` features)
 vs doing fairly dumb shuttling of IO through userspace.
 
-The answer appears to be "no".
+The answer appears to be "no" -- in both directions.
+`fs::copy` doesn't appear to have advantages over `io::copy`.
+And there's mixed evidence on if teeing or vs a separate (arguably duplicate) read has any advantage...
+(if anything, it seems... the opposite).
 
-On a tmpfs:
-
-The fscopy and iocopy functions on both 10k and 10M are within a margin of equal.
-The fscopy is fractions of a millisecond *slower* sometimes.
-So, it seems clear that the `unix::kernel_copy` features are not usefully privileged.
-
-When adding hashing into it (which necessitates an extra read, if using fs::copy):
-copy_then_hash fares slightly worse than tee_and_hash, in both smaller and bigger files.
-(I've also tested with 100M, not committed here, and it's similar.)
-The difference is as high as about 20% on smaller files, and gets down to 5% on large files.
-
-(The exact numbers are considerably erratic, even when criterion reports doing 100 samples.)
-
-On ZFS:
-on 10k: copy_then_hash is still minutely slower, as above on tmpfs.
-on 10M: 15.5/18.5 = 16% slower to tee_and_hash.
-on 100M: 160.2/187.4 = 15% slower to tee_and_hash.
-So here the native copy *does* start getting bonuses, evidently.
-On the other hand, I don't see similarly significant preference in the fscopy vs iocopy measurements,
-so I really don't know what to think of that.
-This is either a mild result, or possibly still simply sampling error.
-
-On ext4:
-... results are so wildly unstable that I don't know what to conclude
-other than ext4 is a somewhat silly and inherently unpredictable filesystem.
-Results swing back and forth by 30 to 50%, positive and negative,
-so it's utterly unclear which approach could be said to be winning.
-
-Overall:
-
-It seems like things are dang near a toss-up, across the board.
-The variances I do see seem minor and frankly make so little sense that I'm
-not convinced the measurements aren't somehow specific to errata that's not worth coding around.
+See adjacent markdown file of the same basename for more notes and some captured data.
 
 All of this could also be reviewed in contrast with rustix functions, if we add that.
 I haven't studied it yet, but it's possible that crate would offer different IO abstraction levels.
 
 */
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::io;
 use std::{fs, io::Write, path::PathBuf};
 
@@ -53,33 +24,47 @@ fn pth(filename: &str) -> PathBuf {
 }
 
 pub fn criterion_benchmark(c: &mut Criterion) {
+    const K: usize = 1204;
+    const M: usize = K * K;
     fs::create_dir_all(pth("")).expect("");
     fs::File::create(pth("10k"))
         .expect("")
-        .write_all(&[0x61_u8; 10000])
+        .write_all(&[0x61_u8; 10 * K])
         .expect("");
     fs::File::create(pth("10M"))
         .expect("")
-        .write_all(&[0x62_u8; 10000000])
+        .write_all(&[0x62_u8; 10 * M])
         .expect("");
+    fs::File::create(pth("100M"))
+        .expect("")
+        .write_all(&[0x62_u8; 100 * M])
+        .expect("");
+    let sizes = ["10k", "10M", "100M"];
 
-    c.bench_function("fscopy 10k", |b| b.iter(|| fscopy(black_box("10k"))));
-    c.bench_function("iocopy 10k", |b| b.iter(|| iocopy(black_box("10k"))));
-    c.bench_function("fscopy 10M", |b| b.iter(|| fscopy(black_box("10M"))));
-    c.bench_function("iocopy 10M", |b| b.iter(|| iocopy(black_box("10M"))));
+    let mut group = c.benchmark_group("copying");
+    for i in sizes.iter() {
+        group.bench_with_input(BenchmarkId::new("fscopy", i), i, |b, i| {
+            b.iter(|| fscopy(*i))
+        });
+        group.bench_with_input(BenchmarkId::new("iocopy", i), i, |b, i| {
+            b.iter(|| iocopy(*i))
+        });
+    }
+    group.finish();
 
-    c.bench_function("copy_then_hash 10k", |b| {
-        b.iter(|| copy_then_hash(black_box("10k")))
-    });
-    c.bench_function("tee_and_hash 10k", |b| {
-        b.iter(|| tee_and_hash(black_box("10k")))
-    });
-    c.bench_function("copy_then_hash 10M", |b| {
-        b.iter(|| copy_then_hash(black_box("10M")))
-    });
-    c.bench_function("tee_and_hash 10M", |b| {
-        b.iter(|| tee_and_hash(black_box("10M")))
-    });
+    // Strings here shortened because criterion starts putting more linebreaks in output
+    // if names go over a certain magical length, which makes it even harder to parse criterion's already noisy output.
+    // Wishlist: research other benchmarking frameworks, because these are dumb, invented problems.
+    let mut group = c.benchmark_group("cp+hash");
+    for i in sizes.iter() {
+        group.bench_with_input(BenchmarkId::new("cp+re", i), i, |b, i| {
+            b.iter(|| copy_then_hash(*i))
+        });
+        group.bench_with_input(BenchmarkId::new("tee", i), i, |b, i| {
+            b.iter(|| tee_and_hash(*i))
+        });
+    }
+    group.finish();
 }
 
 criterion_group!(benches, criterion_benchmark);
