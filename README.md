@@ -12,9 +12,13 @@ Common examples where this comes up are:
 
 - storing snapshots of a set of files as they evolve over time.
 - working with file sets produced by build tools or container processes.
-- any other situation wher you might want an append-only deduplicated cache of files.
+- any other situation where you might want an append-only deduplicated cache of files.
 
 Gar works fine with large files.
+
+To see more about the filesystem layouts and the hashes used by gar,
+see [./README_formats.md](./README_formats.md),
+or the examples below.
 
 
 Example Filesystem
@@ -197,6 +201,8 @@ be able to download all contents of a tree, knowing only the treehash
 
 Transport based on treeidx files would involve more connections than a single tar stream (depending on http protocol version),
 but would also allow better deduplication and transfer of only needed subsets of data if the gar heap doing the retrieval already has some contents.
+
+See more about the format of treeidx files in [./README_formats.md](./README_formats.md).
 
 
 
