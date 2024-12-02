@@ -23,7 +23,11 @@ Example Filesystem
 Sometimes an example makes things clear fast, so let's start with that, and then explain it later ;)
 
 If you run `gar init && gar add .` in a directory containing gar's own source code (for example!),
-you'll get a directory containing paths something like this:
+it'll think for a millisecond or two,
+say "8768db56830498631de8cedd4f40686696953766fefc0f73e28680c998936e48"
+(or some other hash like that),
+and if you then do `find .gar/`,
+you'll see it's created some directories and files with paths something like this:
 
 ```
 ...
@@ -41,10 +45,24 @@ you'll get a directory containing paths something like this:
 ...
 ```
 
-(And if you use the standard unix "`du`" command to ask about the size of these directories,
-it'll probably say some interesting things, like claiming one of either `.gar/treecas` or `.gar/blobcas`
+The upshot is: if you look in `.gar/treecas/{thehash}`, you'll see a snapshot of the filesystem you added.
+
+And if you do that again on the same filesystem, it'll say the same thing,
+and cost no more storage.
+
+And if you do it again on a *similar* filesystem, it'll say a different hash,
+and make a new "treecas" dir,
+but _only files that changed_ will appear in the blobcas dir,
+and the overall size growth on disk will be similarly minimal.
+
+(Please do verify the size savings!  But beware that it's a little tricky :)
+You can use the standard unix "`du`" command to ask about the size of these directories,
+but be aware that the order of arguments will matter, and seperate `du` commands will report things differently than multiple arguments to the same commands!
+his is because `du` only reports the size of a hardlinked file *the first time it sees it*... but multiple `du` commands of course are seeing things afresh.
+So, `du` will probably say some interesting things, like claiming one of either `.gar/treecas` or `.gar/blobcas`
 takes up nearly zero space on disk: that'll be because of the hardlinks.
-The `du` command is a bit clever, only reports size taken by the first time it sees a file!)
+But the exact results may vary based on your incantation.
+And based on the size of directories on your filesystem.  And such fun things as that.)
 
 
 Features
@@ -161,12 +179,24 @@ It might be useful to add another optional directory to Gar heaps
 which contains human-readable labels that are mapped to a treecas hash.
 (This would be reminescent of how git branches and tags point to commit hashes.)
 
+### transport with tar
+
+Planned feature: exporting data from a treecas in a gar heap into a tar stream;
+and importing a tar stream directly into a treecas.
+
+This would be handy for moving data between gar heaps.
+It would also be handy for unpacking lots of tar files with partially overlapping contents without spending lots of disk space on doing so.
+(If you're thinking that latter thing sounds useful for package management and build tools: yes, yes that's the aim.)
+
 ### treeidx files
 
 Treeidx files are meant to contain an all-in-one list of paths in a treecas entry, along with their sizes.
 The purpose of this would be to let a "dumb" HTTP client looking at a gar heap presented by a "dumb" HTTP server with no special configuration
 be able to download all contents of a tree, knowing only the treehash
 (and offer a decent progress bar while doing it, too).
+
+Transport based on treeidx files would involve more connections than a single tar stream (depending on http protocol version),
+but would also allow better deduplication and transfer of only needed subsets of data if the gar heap doing the retrieval already has some contents.
 
 
 
