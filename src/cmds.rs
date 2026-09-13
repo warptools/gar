@@ -24,6 +24,9 @@ pub enum Subcommands {
 
     /// add local files and directories to Gar storage.
     Add(AddCmd),
+
+    /// compute the git tree hash of a path, without touching any Gar repo or storage.
+    Hash(HashCmd),
 }
 
 #[derive(clap::Args, Debug)]
@@ -32,5 +35,11 @@ pub struct InitCmd {}
 #[derive(clap::Args, Debug)]
 pub struct AddCmd {
     /// path to the directory to add to Gar's storage.
+    pub path: PathBuf,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct HashCmd {
+    /// path to the file, directory, or symlink to hash.
     pub path: PathBuf,
 }

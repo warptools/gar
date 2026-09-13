@@ -185,7 +185,7 @@ impl AddWork<'_> {
         // we have to store the executable bit as a suffix of the blobhash.
         // (We can't just add executable bit back onto things in the treecas, because that's...
         // not how hardlinks work, unfortunately.  Oh how I wish it was!  But, nope.)
-        let attrib_suffix = if path_meta.permissions().mode() & 0o111 > 0 {
+        let attrib_suffix = if gittree::mode_is_executable(path_meta.permissions().mode()) {
             "-x"
         } else {
             ""
@@ -241,7 +241,7 @@ impl AddWork<'_> {
         // Sort all entries first; we need to form the tree data this way.
         let scan_path = self.scan_root.join(path);
         let mut entries = fs::read_dir(scan_path)?.collect::<Result<Vec<_>, io::Error>>()?;
-        entries.sort_by(|a, b| a.path().partial_cmp(&b.path()).unwrap());
+        gittree::sort_dirents_gitwise(&mut entries);
 
         // Accumulation begins.
         let mut tha = gittree::TreeHashAccumulator::new(entries.len());
@@ -253,7 +253,7 @@ impl AddWork<'_> {
 
             if ft.is_file() {
                 let hash = self.add_recurse_file(&path.join(&file_name), &ent.metadata()?)?;
-                if ent.metadata()?.permissions().mode() & 0o111 > 0 {
+                if gittree::mode_is_executable(ent.metadata()?.permissions().mode()) {
                     // TODO: we should probably normalize that if any of those bits are set, all of them are set.
                     // Among other defensible normalizations that would certainly occur during a copy.
                     tha.append_executable(fnb, &hash);
