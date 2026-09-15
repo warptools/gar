@@ -52,6 +52,30 @@ where
     Ok(Hash(hash_bytes.into()))
 }
 
+/// Reports whether git would classify a file with these permission bits as executable (mode 100755).
+///
+/// Git tests only the *user* exec bit: a file with only group/other exec bits (e.g. 0o674)
+/// is classified 100644.  (Testing 0o111 here is a subtle divergence trap.)
+pub fn mode_is_executable(mode: u32) -> bool {
+    mode & 0o100 != 0
+}
+
+/// Sorts directory entries into git's tree entry order.
+///
+/// Git sorts entries by name bytes, but compares directory names as if they had a trailing slash.
+/// This differs from a plain name sort whenever a dir name is a prefix of a sibling name
+/// whose next byte is below `/` (e.g. file `foo.` sorts before dir `foo` in git's order).
+pub fn sort_dirents_gitwise(entries: &mut Vec<fs::DirEntry>) {
+    entries.sort_by_key(|ent| {
+        let mut key = ent.file_name().into_encoded_bytes();
+        // file_type() only errs on io failure; treat unknowable as non-dir and let hashing surface the error.
+        if ent.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+            key.push(b'/');
+        }
+        key
+    });
+}
+
 pub fn hash_of_symlink<P: AsRef<Path>>(path: P) -> Result<Hash, io::Error> {
     // Surprising number of SLOC needed here for lifetime reasons.
     let target = fs::read_link(path)?;
@@ -161,7 +185,7 @@ pub fn hash_of_path<P: AsRef<Path>>(path: P) -> Result<Hash, io::Error> {
     }
     if metadata.is_dir() {
         let mut entries = fs::read_dir(path)?.collect::<Result<Vec<_>, io::Error>>()?;
-        entries.sort_by(|a, b| a.path().partial_cmp(&b.path()).unwrap());
+        sort_dirents_gitwise(&mut entries);
 
         // We have to buffer descriptions of all children, because the git format writes the serial size of that in a header.
         let mut tha = TreeHashAccumulator::new(entries.len());
@@ -175,7 +199,7 @@ pub fn hash_of_path<P: AsRef<Path>>(path: P) -> Result<Hash, io::Error> {
 
             if ft.is_file() {
                 // Asking if it's executable is rather graceful in Rust...
-                if ent.metadata()?.permissions().mode() & 0o111 > 0 {
+                if mode_is_executable(ent.metadata()?.permissions().mode()) {
                     tha.append_executable(fnb, &hash);
                 } else {
                     tha.append_file(fnb, &hash);

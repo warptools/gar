@@ -28,6 +28,20 @@ fn main() {
             process::exit(1);
         }
     };
+
+    // The hash subcommand is repo-independent; handle it before any repo search.
+    if let cmds::Subcommands::Hash(args) = &root_args.subcommand {
+        match gittree::hash_of_path(&args.path) {
+            Ok(hash) => {
+                println!("{}", hash.as_hex());
+                process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("{}", e);
+                process::exit(5);
+            }
+        }
+    }
     let repo_search_start = match root_args.repo {
         Some(path) => path,
         None => std::env::current_dir().expect("must be able to find cwd"),
@@ -68,6 +82,7 @@ fn main() {
                 process::exit(3);
             }
         },
+        cmds::Subcommands::Hash(_) => unreachable!("handled before repo search"),
     };
     // let r = repo::Repo::new("/tmp");
     // r.create_dir_all().expect("waa");
