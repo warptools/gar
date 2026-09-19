@@ -1,11 +1,29 @@
 Formats
 --------
 
+In this file, we cover the formats used by Gar in detail.
+
+That includes: {what gets hashed} and {how data is laid out on disk}.
+
+
+### high level: most of this is still effectively git
+
 Most of Gar is exactly as per git.
 
 Blob hashes in Gar are git blob hashes (using sha256).
 
 Tree hashes in Gar are git tree hashes (using sha256).
+
+The few exceptions to Gar's data model similarity to Git are minor:
+Gar does not support git submodules (probably unsurprising);
+and Gar *does* store empty directories (useful, but potentially surprising,
+depending on the strength of your stockholm syndrome about that particular Git misfeature).
+(Empty directories are even handled in a way Git itself understands, just does not do!)
+
+However, the file and directory layouts are considerably different.
+Gar prioritizes determinism (and concurrent read and writability),
+and also keeps all files unpacked for hardlinking,
+and this leads to significantly different conclusions than Git's object dir and packfiles.
 
 
 ### the blobcas directory

@@ -108,6 +108,26 @@ For each file in the blobcas, its hash can be computed freshly from its contents
 
 Yes.  Symlinks are supported and filesets containing symlinks can be stored in Gar with without issue.
 
+#### empty directories
+
+Yes.  Gar stores and recreates empty directories, and they contribute to the tree hash.
+
+(This is Gar's one intentional divergence from git's behaviors.)
+
+Gar still emits a well-formed git tree object when it does this.
+The entry is mode "40000" pointing at the hash of the empty tree --
+exactly the object `git mktree` produces if you hand it such an entry directly,
+and `git ls-tree` reads the result back without complaint.
+
+(If you're interested in deep git lore: the empty dir limitation
+in git resides in their index format, not in the object format.
+Strange but true.)
+
+The practical consequence is low unless you're comparing hashes across the two tools:
+`gar hash` and `git write-tree` agree exactly on the same directory,
+right up until that directory contains an empty directory somewhere.
+Then, Gar does something I'd argue is "more correct", but the hash will be different.
+
 #### posix permissions
 
 Gar does exactly what git does: it ignores every part of posix permissions, except the "x" (execute) bit.
@@ -171,6 +191,8 @@ Different:
 Git stores "commits", which have an ordered, historical relationship and metadata about time and authors,
 in addition to storing files and directories (which it calls "trees").
 Gar does not have any concept of versions.  Gar only stores what git calls "trees".
+Gar also stores empty directories, which git's index cannot;
+see the section on empty directories above for what that means for hash comparisons.
 
 
 
