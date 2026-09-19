@@ -174,6 +174,8 @@ impl AddWork<'_> {
 
         // Blobhash each file.  Gotta know where to put it.
         // TODO: if we have to copy, would rather hold off on this so we don't read twice.
+        // // ^ ok this turns out untrue; attempts to tee in memory have been poor because smarter kernel calls that just do "copy" are faster.
+        // //     so instead what we should really think about here is what's safest in the face of concurrent activity (as much as possible, and from the pov of the cas).
         let hash = gittree::hash_of_stream(
             &mut fs::File::open(self.scan_root.join(path))?,
             path_meta.size(),
@@ -192,13 +194,57 @@ impl AddWork<'_> {
         };
         let blobcas_path = self.repo.blobcas_path().join(hash.as_hex() + attrib_suffix);
         // BRANCH: are we in paranoia mode, or are we hardlinking orignals and trusting in a lack of mutation?
-        // Note that in the copy mode, we use `io::copy` rather than `fs::copy`, because the latter puts work into copying permissions, attribs, etc, and we have no need for that.
         let blobcas_result: io::Result<_> = match self.faithmode {
             FaithMode::Copy => {
-                todo!("i sure wish our hashing and copying could work on one read pass")
-                // io::copy(reader, writer)
-                // ... `io_tee` crate with `TeeReader` ...?
+                // Unimplemented.  Notes toward it, because this design thinking is easy to lose:
+                //
+                // Do: Copy first, and read a second time to hash.
+                // Don't: try to tee the hash out of the copy.
+                // (This might not be intuitive, because it seems like its doing reads twice, but:
+                // Copying can take kernel fastpaths -- and both `fs::copy` and `io::copy` do! --
+                // and when those engage, a subsequent "re"-read is much cheaper
+                // than a read-and-write loop that streams through userland.
+                // See `benches/direct_copy.rs` and its adjacent notes for evidence.)
+                // Also don't: hash, and then copy.  Or at least put that behind a flag that carries cautionary documentation.
+                // (While that would sometimes possibly be a bit faster,
+                // no amount of speed savings are worth the downsides of the CAS geting corrupted
+                // if there's a concurrent modification of a file.
+                // There are cases where we can still use this -- container engines, for example --
+                // but those situations are almost definitionally automated and can handle having a flag.)
+                //
+                // So: copy to a temp name in the blobcas first; then hash; then rename into place.
+                //
+                // Now, about atomicity.  There's another squick coming up here.
+                // Usually, in a content-addressed storage system done on a posix filesystem,
+                // you just do a rename into place unconditionally, and that's that, and it's atomic: yay, easy, and correct.
+                // Here where we're trying to use hardlinks to keep things deduplicating between the blobcas and the treecas?
+                // More complicated.
+                //
+                // When we're about to move a file to its CAS name, we have to check if that name already exists.
+                // Is this ia TOCTOU vs simply doing the atomic rename?
+                // On the surface, yeah, sorta; but, bear with me.
+                // While a rename *is* atomic, but it leaves the target path with *the inode of the source*.
+                // In our context, that means *any treecas hardlinks to the previous file would be in a different family
+                // than any other new treecas links generated from this file*.
+                // (And if you apply that logic over time, it means... yeah, every treecas would get linked to a new blobcas file
+                // every time there's one to share... so... no one would ever... ahem... share.)
+                // So check for an existing entry first, and discard the temp file rather than renaming if one is there.
+                // In the end, we still do a rename, *so there's no correctness risk* from the TOCTOU race;
+                // the only downside of of a race is ~one duplicated blob (a treecas file that becomes separated when the blobcas is overwritten).
+                // (Something that could also be recovered later in some kind of housekeeping operation, even.)
+                //
+                // On the code for making the temp file: the `tempfile` crate was considered and set aside.
+                // It carries a lot of os-conditional code for a job we don't need done especially well;
+                // it creates files 0o600 when we want the repo's normalized permissions;
+                // and its `O_TMPFILE` path is only available on some filesystems anyway.
+                // A probing loop is needed for the hardlink path regardless, so we're just going to own this.
+                todo!("copy mode")
             }
+
+            // In LinkOriginals mode, hardlinks are made into the blobcas straight to the original file.
+            // `fs::hard_link` fails with `AlreadyExists` rather than replacing an existing target,
+            // which is exactly the non-clobbering behavior wanted here (see the inode note in the Copy arm).
+            // However, this is dangerous if the original file is ever modified again: hardlinks effectively transmit mutations.
             FaithMode::LinkOriginals => fs::hard_link(self.scan_root.join(path), &blobcas_path),
             FaithMode::Move => todo!(),
             // REVIEW: what do if permissions aren't normal?  Copy instead?  Add a mode for halt-if-not-ezlinkable?

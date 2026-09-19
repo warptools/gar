@@ -66,6 +66,8 @@ fn main() {
         cmds::Subcommands::Add(args) => match repo {
             Some(repo) => {
                 repo.create_dir_all().expect("creating repo dirs");
+                // TODO: the default should become `Copy`, once that mode is implemented.
+                //  See the large comment block in add.rs about this.
                 match add::add(&repo, args.path, add::FaithMode::LinkOriginals) {
                     Ok(hash) => {
                         println!("{}", hash.as_hex());
