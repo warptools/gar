@@ -4,8 +4,8 @@ use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use crate::gittree;
 use crate::repo;
+use gittree;
 
 pub fn add(
     repo: &repo::Repo,

@@ -1,22 +1,21 @@
-[package]
-name = "gar-rust"
-version = "0.1.0"
+[workspace]
+resolver = "2"
+members = [
+	"crates/gittree",
+	"crates/gar",
+	"crates/gar-cli",
+	"crates/experiments",
+]
+
+[workspace.package]
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
+[workspace.dependencies]
 sha2 = "*"
 hex = "*"
 bytes = "*"
 tempdir = "*"
 clap = { version = "*", features = ["derive"] }
 io_tee = "*"
-
-[dev-dependencies]
 rstest = "*"
 criterion = "*"
-
-[[bench]]
-name = "direct_copy"
-harness = false

@@ -1,0 +1,16 @@
+[package]
+name = "gar-cli"
+version = "0.1.0"
+edition.workspace = true
+
+# The bin is named `gar`, not after the package; pinned explicitly so a structural
+# move does not silently change the CLI's interface.  (This task keeps `gar-rust`;
+# the rename to `gar` is a separate, isolated commit.)
+[[bin]]
+name = "gar-rust"
+path = "src/main.rs"
+
+[dependencies]
+gar = { path = "../gar" }
+gittree = { path = "../gittree" }
+clap.workspace = true

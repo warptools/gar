@@ -1,7 +1,7 @@
-mod add;
 mod cmds;
-mod gittree;
-mod repo;
+
+use gar::add;
+use gar::repo;
 
 mod clap {
     pub use clap::error::ErrorKind;
