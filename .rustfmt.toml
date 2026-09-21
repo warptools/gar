@@ -1,0 +1,8 @@
+edition = "2024"
+
+hard_tabs = true
+match_block_trailing_comma = true
+merge_derives = false
+single_line_let_else_max_width = 0
+struct_lit_width = 0
+struct_variant_width = 0
