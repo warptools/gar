@@ -2,31 +2,31 @@ use std::path::PathBuf;
 
 #[derive(clap::Parser, Debug)]
 pub struct Root {
-    #[command(subcommand)]
-    pub subcommand: Subcommands,
+	#[command(subcommand)]
+	pub subcommand: Subcommands,
 
-    /// Path to the Gar repo to operate on.
-    /// When not provided, it is detected by searching up from the cwd.
-    ///
-    /// Gar repos are always indicated by a ".gar" directory.
-    #[arg(long)]
-    pub repo: Option<PathBuf>,
+	/// Path to the Gar repo to operate on.
+	/// When not provided, it is detected by searching up from the cwd.
+	///
+	/// Gar repos are always indicated by a ".gar" directory.
+	#[arg(long)]
+	pub repo: Option<PathBuf>,
 
-    /// Raise verbosity by specifying this flag repeatedly.
-    #[arg(short='v', long, action = clap::ArgAction::Count)]
-    pub verbosity: u8,
+	/// Raise verbosity by specifying this flag repeatedly.
+	#[arg(short='v', long, action = clap::ArgAction::Count)]
+	pub verbosity: u8,
 }
 
 #[derive(clap::Subcommand, Debug)]
 pub enum Subcommands {
-    /// initialize a new empty Gar repo.
-    Init(InitCmd),
+	/// initialize a new empty Gar repo.
+	Init(InitCmd),
 
-    /// add local files and directories to Gar storage.
-    Add(AddCmd),
+	/// add local files and directories to Gar storage.
+	Add(AddCmd),
 
-    /// compute the git tree hash of a path, without touching any Gar repo or storage.
-    Hash(HashCmd),
+	/// compute the git tree hash of a path, without touching any Gar repo or storage.
+	Hash(HashCmd),
 }
 
 #[derive(clap::Args, Debug)]
@@ -34,12 +34,12 @@ pub struct InitCmd {}
 
 #[derive(clap::Args, Debug)]
 pub struct AddCmd {
-    /// path to the directory to add to Gar's storage.
-    pub path: PathBuf,
+	/// path to the directory to add to Gar's storage.
+	pub path: PathBuf,
 }
 
 #[derive(clap::Args, Debug)]
 pub struct HashCmd {
-    /// path to the file, directory, or symlink to hash.
-    pub path: PathBuf,
+	/// path to the file, directory, or symlink to hash.
+	pub path: PathBuf,
 }
