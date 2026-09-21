@@ -35,4 +35,4 @@ test: ## Run all tests.
 
 .PHONY: clean
 clean: ## Remove this workspace's build outputs (scoped: the target dir may be shared via CARGO_TARGET_DIR).
-	cargo clean -p gittree -p gar -p gar-cli -p experiments
+	cargo clean --workspace
