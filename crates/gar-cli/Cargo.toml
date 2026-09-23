@@ -1,0 +1,16 @@
+[package]
+name = "gar-cli"
+version = "0.1.0"
+edition.workspace = true
+
+# The bin is named `gar`, not after the package (`gar-cli`).  Every README
+# example and help string already invokes `gar`; the old `gar-rust` name was
+# just the repo name leaking into the artifact.
+[[bin]]
+name = "gar"
+path = "src/main.rs"
+
+[dependencies]
+gar = { path = "../gar" }
+gittree = { path = "../gittree" }
+clap.workspace = true

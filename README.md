@@ -228,6 +228,23 @@ See more about the format of treeidx files in [./README_formats.md](./README_for
 
 
 
+Contributing
+------------
+
+It's a pretty standard rust/cargo workspace.
+
+The code is split across three crates:
+`gittree` (git-compatible tree hashing, standalone),
+`gar` (the repo and add logic, built on `gittree`),
+and `gar-cli` (the `gar` binary).
+A fourth crate, `experiments`, holds benchmarks and is not product code.
+
+Run `make setup` once after cloning: it activates the git hooks.
+Run `make` to see all commands.
+Before committing anything, run `make all` (fmt, build, test).
+There should be no warning messages.
+
+
 License
 -------
 
