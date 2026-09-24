@@ -57,15 +57,24 @@ fn main() {
 				process::exit(4);
 			},
 			None => {
-				let r = repo::Repo::new(repo_search_start);
-				r.create_dir_all().expect("creating repo dirs");
+				let r = match repo::init_at(repo_search_start) {
+					Ok(r) => r,
+					Err(e) => {
+						eprintln!("{e}");
+						process::exit(5);
+					},
+				};
 				println!("gar repo created at {:?}", r.repo_path());
 				process::exit(0);
 			},
 		},
 		cmds::Subcommands::Add(args) => match repo {
 			Some(repo) => {
-				repo.create_dir_all().expect("creating repo dirs");
+				// Restores any subdirectory that's gone missing since the repo was made.
+				if let Err(e) = repo.create() {
+					eprintln!("{e}");
+					process::exit(5);
+				}
 				// TODO: the default should become `Copy`, once that mode is implemented.
 				//  See the large comment block in add.rs about this.
 				match add::add(&repo, args.path, add::FaithMode::LinkOriginals) {
