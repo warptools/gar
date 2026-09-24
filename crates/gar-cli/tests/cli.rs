@@ -74,7 +74,12 @@ fn init_twice_reports_the_existing_repo() {
 	gar(td.path(), &["init"]);
 	let r = gar(td.path(), &["init"]);
 	assert_eq!(r.code, 4, "stderr: {}", r.stderr);
-	assert!(r.stdout.contains("already exists"), "stdout: {}", r.stdout);
+	assert!(r.stderr.contains("already exists"), "stderr: {}", r.stderr);
+	assert!(
+		r.stdout.is_empty(),
+		"nothing succeeded, so stdout should be empty; stdout: {}",
+		r.stdout
+	);
 }
 
 /// Searching upward from the cwd is still how a repo is found when `--repo` is absent.

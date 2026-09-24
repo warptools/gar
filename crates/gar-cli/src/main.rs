@@ -1,4 +1,5 @@
 mod cmds;
+mod exitcodes;
 mod paths;
 
 use gar::add;
@@ -13,6 +14,8 @@ use clap::Parser;
 use std::process;
 
 fn main() {
+	// Results go on stdout; diagnostics go on stderr.
+	// Whoever reads the hash `gar add` prints out of a pipe should get the hash, and nothing else.
 	let root_args = match cmds::Root::try_parse_from(std::env::args_os()) {
 		Ok(args) => args,
 		Err(e)
@@ -22,11 +25,11 @@ fn main() {
 			) =>
 		{
 			println!("{e}");
-			process::exit(0);
+			process::exit(exitcodes::SUCCESS);
 		},
 		Err(e) => {
 			eprintln!("{e}");
-			process::exit(1);
+			process::exit(exitcodes::USAGE);
 		},
 	};
 
@@ -35,11 +38,11 @@ fn main() {
 		match gittree::hash_of_path(&args.path) {
 			Ok(hash) => {
 				println!("{}", hash.as_hex());
-				process::exit(0);
+				process::exit(exitcodes::SUCCESS);
 			},
 			Err(e) => {
 				eprintln!("{}", e);
-				process::exit(5);
+				process::exit(exitcodes::IO_ERROR);
 			},
 		}
 	}
@@ -57,7 +60,7 @@ fn main() {
 			Ok(None) => cwd,
 			Err(e) => {
 				eprintln!("{e}");
-				process::exit(5);
+				process::exit(exitcodes::IO_ERROR);
 			},
 		},
 	};
@@ -66,17 +69,17 @@ fn main() {
 	match root_args.subcommand {
 		cmds::Subcommands::Init(_) => {
 			if repo.exists() {
-				println!("gar repo already exists at {:?}", repo.repo_path());
-				process::exit(4);
+				eprintln!("gar repo already exists at {:?}", repo.repo_path());
+				process::exit(exitcodes::REPO_EXISTS);
 			}
 			match repo::init_at(&repo_dir) {
 				Ok(r) => println!("gar repo created at {:?}", r.repo_path()),
 				Err(e) => {
 					eprintln!("{e}");
-					process::exit(5);
+					process::exit(exitcodes::IO_ERROR);
 				},
 			}
-			process::exit(0);
+			process::exit(exitcodes::SUCCESS);
 		},
 		cmds::Subcommands::Add(args) => {
 			if !repo.exists() {
@@ -88,23 +91,23 @@ fn main() {
 						)
 					},
 				}
-				process::exit(3);
+				process::exit(exitcodes::NO_REPO);
 			}
 			// Restores any subdirectory that's gone missing since the repo was made.
 			if let Err(e) = repo.create() {
 				eprintln!("{e}");
-				process::exit(5);
+				process::exit(exitcodes::IO_ERROR);
 			}
 			// TODO: the default should become `Copy`, once that mode is implemented.
 			//  See the large comment block in add.rs about this.
 			match add::add(&repo, args.path, add::FaithMode::LinkOriginals) {
 				Ok(hash) => {
 					println!("{}", hash.as_hex());
-					process::exit(0);
+					process::exit(exitcodes::SUCCESS);
 				},
 				Err(e) => {
 					eprintln!("{}", e);
-					process::exit(5);
+					process::exit(exitcodes::IO_ERROR);
 				},
 			}
 		},
