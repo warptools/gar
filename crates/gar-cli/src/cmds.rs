@@ -6,7 +6,8 @@ pub struct Root {
 	pub subcommand: Subcommands,
 
 	/// Path to the Gar repo to operate on.
-	/// When not provided, it is detected by searching up from the cwd.
+	/// This names the repo exactly: nothing is searched for above it.
+	/// When not provided, the repo is detected by searching up from the cwd.
 	///
 	/// Gar repos are always indicated by a ".gar" directory.
 	#[arg(long)]

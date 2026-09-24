@@ -125,3 +125,59 @@ fn init_creates_the_named_directory() {
 	assert_eq!(r.code, 0, "stderr: {}", r.stderr);
 	assert!(target.join(".gar/blobcas").is_dir());
 }
+
+/// `--repo` names the repo exactly.  It is not a place to start searching from.
+#[test]
+fn explicit_repo_is_not_a_search_start() {
+	let td = scratch("explicit-no-search");
+	gar(td.path(), &["init"]);
+	let sub = td.path().join("sub");
+	std::fs::create_dir(&sub).expect("can make a subdir");
+
+	let r = gar(td.path(), &["--repo", arg(&sub), "init"]);
+	assert_eq!(
+		r.code, 0,
+		"an explicit --repo means that exact place, even nested inside another repo; stderr: {}",
+		r.stderr
+	);
+	assert!(sub.join(".gar/blobcas").is_dir());
+}
+
+/// The hazard this closes: an explicit `--repo` that isn't a repo must never
+/// quietly write into some ancestor's heap instead.
+#[test]
+fn add_with_an_explicit_nonrepo_errors_rather_than_finding_an_ancestor() {
+	let td = scratch("explicit-nonrepo");
+	gar(td.path(), &["init"]);
+	let work = td.path().join("work");
+	std::fs::create_dir(&work).expect("can make a subdir");
+	std::fs::write(work.join("a_file"), b"a file\n").expect("can write a file");
+
+	let r = gar(td.path(), &["--repo", arg(&work), "add", "work"]);
+	assert_eq!(r.code, 3, "stdout: {}, stderr: {}", r.stdout, r.stderr);
+	let leaked: Vec<_> = std::fs::read_dir(td.path().join(".gar/treecas"))
+		.expect("the ancestor repo exists")
+		.map(|e| e.expect("readable dirent").file_name())
+		.collect();
+	assert!(
+		leaked.is_empty(),
+		"nothing should have been written to the ancestor repo, found: {leaked:?}"
+	);
+}
+
+/// A relative `--repo` resolves against the cwd, and is reported as the absolute place it landed.
+#[test]
+fn relative_explicit_repo_resolves_against_cwd() {
+	let td = scratch("relative-repo");
+	let sub = td.path().join("sub");
+	std::fs::create_dir(&sub).expect("can make a subdir");
+
+	let r = gar(&sub, &["--repo", "../sub", "init"]);
+	assert_eq!(r.code, 0, "stderr: {}", r.stderr);
+	assert!(sub.join(".gar/blobcas").is_dir());
+	assert!(
+		!r.stdout.contains(".."),
+		"the reported path should be resolved, not echoed back; stdout: {}",
+		r.stdout
+	);
+}

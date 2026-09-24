@@ -17,3 +17,4 @@ clap.workspace = true
 
 [dev-dependencies]
 tempdir.workspace = true
+rstest.workspace = true

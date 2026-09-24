@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct Repo {
-	/// Path as originally specified.
+	/// Path to the repo's own directory.
 	/// Includes ".gar": `new` takes the directory that contains the repo, and appends that.
-	/// Usually this used in messages to the user.
+	/// Usually this is what's used in messages to the user.
 	path: PathBuf,
 
 	// All of the paths below are suffixes of 'self.path', but used so frequently we create them once.
@@ -45,6 +45,14 @@ impl Repo {
 
 	pub fn repo_path(&self) -> &Path {
 		&self.path
+	}
+
+	/// Reports whether this repo is actually present on disk.
+	///
+	/// This asks whether the `.gar` path is a directory, not merely whether something is there:
+	/// a plain file named `.gar` is not a repo.
+	pub fn exists(&self) -> bool {
+		self.repo_path().is_dir()
 	}
 	pub fn blobcas_path(&self) -> &Path {
 		&self.blobcas_path
@@ -92,19 +100,24 @@ pub fn init_at(dir: impl AsRef<Path>) -> Result<Repo, io::Error> {
 	Ok(repo)
 }
 
-pub fn find_repo() -> Result<Option<Repo>, io::Error> {
-	return find_repo_from(std::env::current_dir()?);
-}
-
-pub fn find_repo_from(p: impl AsRef<Path>) -> Result<Option<Repo>, io::Error> {
-	let path = p.as_ref();
-	if path.join(".gar").exists() {
-		return Ok(Some(Repo::new(path)));
+/// Searches for the directory holding a gar repo: `dir` itself, or the nearest of its ancestors.
+///
+/// `dir` must be absolute and already resolved.
+/// Walking upward from a relative path runs out at "" long before reaching the filesystem root,
+/// which is a wrong answer rather than a slow one -- so relative input is refused instead.
+pub fn find_repo_dir(dir: &Path) -> Result<Option<PathBuf>, io::Error> {
+	if !dir.is_absolute() {
+		return Err(io::Error::new(
+			io::ErrorKind::InvalidInput,
+			format!("cannot search for a gar repo from the relative path {dir:?}"),
+		));
 	}
-	match path.parent() {
-		Some(p) => return find_repo_from(p),
-		None => return Ok(None),
+	for candidate in dir.ancestors() {
+		if candidate.join(".gar").exists() {
+			return Ok(Some(candidate.to_owned()));
+		}
 	}
+	Ok(None)
 }
 
 #[cfg(test)]
@@ -157,5 +170,46 @@ mod tests {
 		fs::remove_dir(repo.treeidx_path()).expect("removing a subdir");
 		repo.create().expect("creating a repo that mostly exists");
 		assert!(repo.treeidx_path().is_dir());
+	}
+
+	#[test]
+	fn find_repo_dir_finds_the_dir_itself() {
+		let td = scratch("find-self");
+		init_at(td.path()).expect("creating a repo");
+		let found = find_repo_dir(td.path()).expect("no io errors");
+		assert_eq!(found.as_deref(), Some(td.path()));
+	}
+
+	#[test]
+	fn find_repo_dir_finds_an_ancestor() {
+		let td = scratch("find-ancestor");
+		init_at(td.path()).expect("creating a repo");
+		let deep = td.path().join("a/b/c");
+		fs::create_dir_all(&deep).expect("can make subdirs");
+		let found = find_repo_dir(&deep).expect("no io errors");
+		assert_eq!(found.as_deref(), Some(td.path()));
+	}
+
+	#[test]
+	fn find_repo_dir_finds_nothing_when_there_is_nothing() {
+		let td = scratch("find-nothing");
+		let deep = td.path().join("a/b/c");
+		fs::create_dir_all(&deep).expect("can make subdirs");
+		let found = find_repo_dir(&deep).expect("no io errors");
+		// Asserted as "nothing in our scratch tree" rather than "nothing at all":
+		// the walk continues past the tempdir to the filesystem root, and what lives up
+		// there is the machine's business, not this test's.
+		assert!(
+			found.as_ref().map_or(true, |d| !d.starts_with(td.path())),
+			"found a repo inside the scratch tree: {found:?}"
+		);
+	}
+
+	/// An upward walk of a relative path would end at "" rather than at the filesystem root,
+	/// reporting "no repo" for a directory that's sitting inside one.
+	#[test]
+	fn find_repo_dir_refuses_relative_input() {
+		let err = find_repo_dir(Path::new("some/relative/path")).expect_err("relative input");
+		assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
 	}
 }

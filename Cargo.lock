@@ -411,6 +411,7 @@ dependencies = [
  "clap",
  "gar",
  "gittree",
+ "rstest",
  "tempdir",
 ]
 
