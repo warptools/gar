@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 pub struct Repo {
 	/// Path as originally specified.
-	/// Includes ".gar" (unless this is a bare repo).
+	/// Includes ".gar": `new` takes the directory that contains the repo, and appends that.
 	/// Usually this used in messages to the user.
 	path: PathBuf,
 
@@ -15,17 +15,14 @@ pub struct Repo {
 }
 
 impl Repo {
-	pub fn new(root_path: impl AsRef<Path>) -> Result<Self, io::Error> {
-		Self::new_bare(root_path.as_ref().join(".gar"))
-	}
-	pub fn new_bare(root_path: impl AsRef<Path>) -> Result<Self, io::Error> {
-		let path = root_path.as_ref().to_owned();
-		Ok(Repo {
+	pub fn new(root_path: impl AsRef<Path>) -> Self {
+		let path = root_path.as_ref().join(".gar");
+		Repo {
 			blobcas_path: (&path).join("blobcas"),
 			treecas_path: (&path).join("treecas"),
 			treeidx_path: (&path).join("treeidx"),
 			path,
-		})
+		}
 	}
 
 	pub fn create_dir_all(&self) -> io::Result<()> {
@@ -57,7 +54,7 @@ pub fn find_repo() -> Result<Option<Repo>, io::Error> {
 pub fn find_repo_from(p: impl AsRef<Path>) -> Result<Option<Repo>, io::Error> {
 	let path = p.as_ref();
 	if path.join(".gar").exists() {
-		return Ok(Some(Repo::new(path)?));
+		return Ok(Some(Repo::new(path)));
 	}
 	match path.parent() {
 		Some(p) => return find_repo_from(p),
