@@ -181,3 +181,33 @@ fn relative_explicit_repo_resolves_against_cwd() {
 		r.stdout
 	);
 }
+
+/// A file squatting where a treecas entry belongs must not read as a completed add:
+/// the rename fails, and returning the hash anyway would name a tree the heap lacks.
+#[test]
+fn add_refuses_to_commit_onto_a_treecas_entry_that_is_a_file() {
+	let td = scratch("add-treecas-imposter");
+	gar(td.path(), &["init"]);
+	std::fs::create_dir(td.path().join("stuff")).expect("mkdir stuff");
+	std::fs::write(td.path().join("stuff/a_file"), b"a file\n").expect("write a file");
+
+	// First add succeeds and materializes treecas/<hash> as a directory.
+	let r1 = gar(td.path(), &["add", "stuff"]);
+	assert_eq!(r1.code, 0, "stderr: {}", r1.stderr);
+	let hash = r1.stdout.trim().to_owned();
+	let entry = td.path().join(".gar/treecas").join(&hash);
+	assert!(
+		entry.is_dir(),
+		"first add should have made a treecas directory"
+	);
+
+	// Replace that entry with a plain file, then add the same content again.
+	std::fs::remove_dir_all(&entry).expect("remove the treecas dir");
+	std::fs::write(&entry, b"not a tree\n").expect("write a file in its place");
+	let r2 = gar(td.path(), &["add", "stuff"]);
+	assert_ne!(
+		r2.code, 0,
+		"add reported success over a treecas entry that is a plain file; stdout: {}",
+		r2.stdout
+	);
+}

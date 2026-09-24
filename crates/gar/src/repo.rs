@@ -68,7 +68,9 @@ impl Repo {
 /// `fs::create_dir`, counting an already-present directory as success.
 fn create_dir_if_absent(p: &Path) -> io::Result<()> {
 	match fs::create_dir(p) {
-		Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+		// Already there is fine -- but only if it is actually a directory.
+		// A plain file squatting at the path is not, and must not read as success.
+		Err(e) if e.kind() == io::ErrorKind::AlreadyExists && p.is_dir() => Ok(()),
 		r => r,
 	}
 }
@@ -113,7 +115,8 @@ pub fn find_repo_dir(dir: &Path) -> Result<Option<PathBuf>, io::Error> {
 		));
 	}
 	for candidate in dir.ancestors() {
-		if candidate.join(".gar").exists() {
+		// A ".gar" that is a plain file is not a repo; is_dir skips past it and keeps walking.
+		if candidate.join(".gar").is_dir() {
 			return Ok(Some(candidate.to_owned()));
 		}
 	}
@@ -211,5 +214,32 @@ mod tests {
 	fn find_repo_dir_refuses_relative_input() {
 		let err = find_repo_dir(Path::new("some/relative/path")).expect_err("relative input");
 		assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+	}
+
+	#[test]
+	fn create_refuses_a_file_where_a_subdir_belongs() {
+		let td = scratch("create-file-subdir");
+		let repo = Repo::new(td.path());
+		fs::create_dir(repo.repo_path()).expect("make the .gar dir");
+		// A plain file sits where the treeidx subdir belongs.
+		fs::write(repo.treeidx_path(), b"not a dir\n").expect("write the imposter");
+		let err = repo
+			.create()
+			.expect_err("create must refuse a file where a subdir belongs");
+		assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+	}
+
+	#[test]
+	fn find_repo_dir_skips_a_gar_file_and_finds_the_real_ancestor() {
+		let td = scratch("find-skip-gar-file");
+		init_at(td.path()).expect("creating the real repo");
+		let mid = td.path().join("mid");
+		fs::create_dir(&mid).expect("mkdir mid");
+		// A plain file named ".gar" -- not a repo.
+		fs::write(mid.join(".gar"), b"not a dir\n").expect("write the imposter");
+		let deep = mid.join("deep");
+		fs::create_dir(&deep).expect("mkdir deep");
+		let found = find_repo_dir(&deep).expect("no io errors");
+		assert_eq!(found.as_deref(), Some(td.path()));
 	}
 }
