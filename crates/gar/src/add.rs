@@ -83,9 +83,11 @@ pub fn add(
 			//   - `e.kind() == io::ErrorKind::DirectoryNotEmpty`
 			//      --> is what we really see, except its hidden behind `#![feature(io_error_more)]`.
 			//
-			// So... Check the actual outcomes instead.
-			// Return the error from renaming only if the destination doesn't exist.
-			if !dest_path.exists() {
+			// Tolerate the failed rename only if a *directory* is already there -- someone else
+			// manifested the same tree, which is fine in a CAS.  A plain file squatting at the
+			// destination is not that tree, so returning success would hand back a hash for a
+			// heap that lacks it.
+			if !dest_path.is_dir() {
 				return Err(e);
 			}
 		},
