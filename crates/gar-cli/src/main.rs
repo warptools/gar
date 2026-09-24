@@ -14,6 +14,8 @@ use clap::Parser;
 use std::process;
 
 fn main() {
+	// Results go on stdout; diagnostics go on stderr.
+	// Whoever reads the hash `gar add` prints out of a pipe should get the hash, and nothing else.
 	let root_args = match cmds::Root::try_parse_from(std::env::args_os()) {
 		Ok(args) => args,
 		Err(e)
@@ -67,7 +69,7 @@ fn main() {
 	match root_args.subcommand {
 		cmds::Subcommands::Init(_) => {
 			if repo.exists() {
-				println!("gar repo already exists at {:?}", repo.repo_path());
+				eprintln!("gar repo already exists at {:?}", repo.repo_path());
 				process::exit(exitcodes::REPO_EXISTS);
 			}
 			match repo::init_at(&repo_dir) {
