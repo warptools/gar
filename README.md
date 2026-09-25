@@ -35,21 +35,22 @@ you'll see it's created some directories and files with paths something like thi
 
 ```
 ...
-.gar/blobcas/aad6b5d9f40cd90598235b9ff2bcfc8dbae1c8b391c5dd5b2c6231b22aa9c5db
-.gar/blobcas/1f4fadf0177a322792c5e4ea099719b86dc09c156efc1c63588b27f1ee22020f
-.gar/blobcas/2415e57ca7d0c6f54517f6fec92d66d673c1965c2b3817b136a8e2c504cc89d5
-.gar/blobcas/a7573b95a28adc55e8b33d49407202178b0008faf4ecc39495e2e8737883a4dd-x
-.gar/blobcas/f2250085e10ef5db59e425e673796108cf2c059a49e6f7451177cd2dd75ff0b3
-.gar/blobcas/08a6ae3fc51c74b826f1d7789f0736989db40d9a2f0800c0f0c24ff81e47d288
-.gar/treecas/8768db56830498631de8cedd4f40686696953766fefc0f73e28680c998936e48/LICENSE-MIT
-.gar/treecas/8768db56830498631de8cedd4f40686696953766fefc0f73e28680c998936e48/Cargo.toml
-.gar/treecas/8768db56830498631de8cedd4f40686696953766fefc0f73e28680c998936e48/.gitignore
-.gar/treecas/8768db56830498631de8cedd4f40686696953766fefc0f73e28680c998936e48/src
-.gar/treecas/8768db56830498631de8cedd4f40686696953766fefc0f73e28680c998936e48/src/main.rs
+.gar/blobcas/aa/d6/aad6b5d9f40cd90598235b9ff2bcfc8dbae1c8b391c5dd5b2c6231b22aa9c5db
+.gar/blobcas/1f/4f/1f4fadf0177a322792c5e4ea099719b86dc09c156efc1c63588b27f1ee22020f
+.gar/blobcas/24/15/2415e57ca7d0c6f54517f6fec92d66d673c1965c2b3817b136a8e2c504cc89d5
+.gar/blobcas/a7/57/a7573b95a28adc55e8b33d49407202178b0008faf4ecc39495e2e8737883a4dd-x
+.gar/blobcas/f2/25/f2250085e10ef5db59e425e673796108cf2c059a49e6f7451177cd2dd75ff0b3
+.gar/blobcas/08/a6/08a6ae3fc51c74b826f1d7789f0736989db40d9a2f0800c0f0c24ff81e47d288
+.gar/treecas/87/68/8768db56830498631de8cedd4f40686696953766fefc0f73e28680c998936e48/LICENSE-MIT
+.gar/treecas/87/68/8768db56830498631de8cedd4f40686696953766fefc0f73e28680c998936e48/Cargo.toml
+.gar/treecas/87/68/8768db56830498631de8cedd4f40686696953766fefc0f73e28680c998936e48/.gitignore
+.gar/treecas/87/68/8768db56830498631de8cedd4f40686696953766fefc0f73e28680c998936e48/src
+.gar/treecas/87/68/8768db56830498631de8cedd4f40686696953766fefc0f73e28680c998936e48/src/main.rs
 ...
 ```
 
-The upshot is: if you look in `.gar/treecas/{thehash}`, you'll see a snapshot of the filesystem you added.
+The upshot is: if you look in `.gar/treecas/{ab}/{cd}/{thehash}`, you'll see a snapshot of the filesystem you added.
+(The `{ab}/{cd}` part is just the first four characters of the hash: that keeps any one directory from getting enormous.)
 
 And if you do that again on the same filesystem, it'll say the same thing,
 and cost no more storage.
@@ -76,13 +77,13 @@ Gar has two main commands: `gar init` and `gar add`.
 
 - `gar init` creates a "gar heap", which is a "`.gar/`" directory and few more directories with that.
 - `gar add <path>` scans the given path, hashes all its contents, and stores a snapshot of it into the nearest gar heap it can find.
-- `gar add <path>` returns the hash when it's done.  You'll then be able to find the snapshot of your files in `.gar/treecas/{hash}`.
+- `gar add <path>` returns the hash when it's done.  You'll then be able to find the snapshot of your files in `.gar/treecas/{ab}/{cd}/{hash}`.
 
 A "gar heap" consists of the following two (or three) directory trees:
 
 - blobcas -- a large, even-depth directory where every file is stored with a name that is its sha256 blobhash.
 	- plus a suffix of "-x" for files that are executable (this is necessary because hardlinks share mode bits as well as contents).
-- treecas -- a large directory where every dir is a treehash and contains entirely that tree, materialized.
+- treecas -- a large, even-depth directory where every dir below the shard levels is a treehash and contains entirely that tree, materialized.
 	- every file within these is a hardlink to a file in the blobcas.
 	- not every subtree is materialized at the root of this dir (we don't have dir hardlinks, so there would be no point ;)).
 - treeidx -- a directory where every file contains a compact, deterministic, serial representation of the expected hashes of every subtree in each materialized member of treecas.

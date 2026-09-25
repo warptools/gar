@@ -26,10 +26,29 @@ and also keeps all files unpacked for hardlinking,
 and this leads to significantly different conclusions than Git's object dir and packfiles.
 
 
+### sharding
+
+Both the blobcas and the treecas are sharded:
+entries don't sit directly in the top directory, but two directory levels below it.
+The first level is named by the first two characters of the hash, in hex;
+the second level by the next two;
+and the entry itself is named by the *full* hash, not the remainder.
+Hex is always lowercase.
+
+```
+.gar/blobcas/29/09/2909489adcb095aa795a9a7e6d92db735d0a0ced0782c43496675bdb7beec3ce
+.gar/blobcas/29/09/2909489adcb095aa795a9a7e6d92db735d0a0ced0782c43496675bdb7beec3ce-x
+.gar/treecas/21/28/2128f977414c236e7a4367508fbc095549e50ae05f26983540e86b0abd7d1e58/
+```
+
+Shard directories are created when the first entry is stored in them, not in advance.
+A reader should treat a missing shard directory the same as a missing entry.
+
+
 ### the blobcas directory
 
 The blobcas directory is full of files with names that are the hex encoding
-of the git blob hash using sha256.
+of the git blob hash using sha256, sharded as described above.
 
 The git blob hash is distinct from the sha256 hash of the file itself.
 More specifically, the hash has a preamble of the word "blob" and then the size of the following body.
@@ -43,7 +62,7 @@ so, we have to store content separately when it has distinct metadata.
 ### the treecas directory
 
 The treecas directory is full of directories with names that are the hex encoding
-of the git tree hash using sha256.
+of the git tree hash using sha256, sharded as described above.
 
 (If you're not familiar with the git treehash: it's similar to the commit hash,
 but with slightly *less* data: the treehash covers _only the files and directories_ in the commit.
