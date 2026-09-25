@@ -40,7 +40,8 @@ pub fn add(
 	let hash = w.add_recurse(Path::new(""), &fs::metadata(w.scan_root)?)?;
 
 	// The final commit: move the whole wiptree into CAS place.
-	let dest_path: PathBuf = repo.treecas_path().join(hash.as_hex());
+	let dest_path: PathBuf = repo.tree_path(&hash);
+	repo.create_tree_shard(&hash)?;
 	let treecas_result = fs::rename(&td, &dest_path);
 
 	// The error handling for this last step, however, is... wild.
@@ -189,12 +190,11 @@ impl AddWork<'_> {
 		// we have to store the executable bit as a suffix of the blobhash.
 		// (We can't just add executable bit back onto things in the treecas, because that's...
 		// not how hardlinks work, unfortunately.  Oh how I wish it was!  But, nope.)
-		let attrib_suffix = if gittree::mode_is_executable(path_meta.permissions().mode()) {
-			"-x"
-		} else {
-			""
-		};
-		let blobcas_path = self.repo.blobcas_path().join(hash.as_hex() + attrib_suffix);
+		let blobcas_path = self.repo.blob_path(
+			&hash,
+			gittree::mode_is_executable(path_meta.permissions().mode()),
+		);
+		self.repo.create_blob_shard(&hash)?;
 		// BRANCH: are we in paranoia mode, or are we hardlinking orignals and trusting in a lack of mutation?
 		let blobcas_result: io::Result<_> = match self.faithmode {
 			FaithMode::Copy => {

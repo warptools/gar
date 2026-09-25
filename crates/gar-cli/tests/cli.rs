@@ -53,6 +53,17 @@ fn scratch(name: &str) -> tempdir::TempDir {
 	tempdir::TempDir::new(&format!("gar-test-{name}-")).expect("can make a tempdir")
 }
 
+/// Where a tree lands in the heap under `root`, per the sharded layout.
+///
+/// Spelled out here rather than borrowed from the library,
+/// so a change to the layout shows up as test failures.
+fn treecas_entry(root: &Path, hash: &str) -> PathBuf {
+	root.join(".gar/treecas")
+		.join(&hash[0..2])
+		.join(&hash[2..4])
+		.join(hash)
+}
+
 /// Paths from a tempdir are passed as args; this is the unwrap for that.
 fn arg(p: &Path) -> &str {
 	p.to_str().expect("tempdir paths are utf8")
@@ -95,7 +106,7 @@ fn add_from_a_subdir_finds_the_ancestor_repo() {
 	assert_eq!(r.code, 0, "stderr: {}", r.stderr);
 	let hash = r.stdout.trim();
 	assert!(
-		td.path().join(".gar/treecas").join(hash).is_dir(),
+		treecas_entry(td.path(), hash).is_dir(),
 		"the tree should have landed in the ancestor repo; stdout: {}",
 		r.stdout
 	);
@@ -196,11 +207,11 @@ fn add_refuses_to_commit_onto_a_treecas_entry_that_is_a_file() {
 	std::fs::create_dir(td.path().join("stuff")).expect("mkdir stuff");
 	std::fs::write(td.path().join("stuff/a_file"), b"a file\n").expect("write a file");
 
-	// First add succeeds and materializes treecas/<hash> as a directory.
+	// First add succeeds and materializes the treecas entry as a directory.
 	let r1 = gar(td.path(), &["add", "stuff"]);
 	assert_eq!(r1.code, 0, "stderr: {}", r1.stderr);
 	let hash = r1.stdout.trim().to_owned();
-	let entry = td.path().join(".gar/treecas").join(&hash);
+	let entry = treecas_entry(td.path(), &hash);
 	assert!(
 		entry.is_dir(),
 		"first add should have made a treecas directory"
@@ -215,4 +226,67 @@ fn add_refuses_to_commit_onto_a_treecas_entry_that_is_a_file() {
 		"add reported success over a treecas entry that is a plain file; stdout: {}",
 		r2.stdout
 	);
+}
+
+/// The heap layout is an external contract: other tools read heaps directly.
+/// So the paths here are spelled out literally rather than built by any helper,
+/// which would change right along with the thing under test.
+#[test]
+fn add_places_entries_at_sharded_paths() {
+	let td = scratch("add-layout");
+	gar(td.path(), &["init"]);
+	let stuff = td.path().join("stuff");
+	std::fs::create_dir(&stuff).expect("mkdir stuff");
+	std::fs::write(stuff.join("a_file"), b"a file\n").expect("write a file");
+	std::fs::write(stuff.join("a_script"), b"a file\n").expect("write a script");
+	std::fs::set_permissions(
+		stuff.join("a_script"),
+		std::os::unix::fs::PermissionsExt::from_mode(0o755),
+	)
+	.expect("chmod the script");
+
+	let r = gar(td.path(), &["add", "stuff"]);
+	assert_eq!(r.code, 0, "stderr: {}", r.stderr);
+	assert_eq!(
+		r.stdout.trim(),
+		"2128f977414c236e7a4367508fbc095549e50ae05f26983540e86b0abd7d1e58"
+	);
+	for (path, want_dir) in [
+		(
+			".gar/blobcas/29/09/2909489adcb095aa795a9a7e6d92db735d0a0ced0782c43496675bdb7beec3ce",
+			false,
+		),
+		(
+			".gar/blobcas/29/09/2909489adcb095aa795a9a7e6d92db735d0a0ced0782c43496675bdb7beec3ce-x",
+			false,
+		),
+		(
+			".gar/treecas/21/28/2128f977414c236e7a4367508fbc095549e50ae05f26983540e86b0abd7d1e58",
+			true,
+		),
+	] {
+		let p = td.path().join(path);
+		let is = if want_dir { p.is_dir() } else { p.is_file() };
+		assert!(
+			is,
+			"expected a {} at {path}",
+			if want_dir { "dir" } else { "file" }
+		);
+	}
+}
+
+/// Adding a tree the heap already holds makes the final rename fail, because the entry is there.
+/// That's another add having gotten there first, which in a CAS is success.
+#[test]
+fn add_of_an_already_stored_tree_succeeds() {
+	let td = scratch("add-twice");
+	gar(td.path(), &["init"]);
+	std::fs::create_dir(td.path().join("stuff")).expect("mkdir stuff");
+	std::fs::write(td.path().join("stuff/a_file"), b"a file\n").expect("write a file");
+
+	let r1 = gar(td.path(), &["add", "stuff"]);
+	assert_eq!(r1.code, 0, "stderr: {}", r1.stderr);
+	let r2 = gar(td.path(), &["add", "stuff"]);
+	assert_eq!(r2.code, 0, "stderr: {}", r2.stderr);
+	assert_eq!(r1.stdout, r2.stdout);
 }
