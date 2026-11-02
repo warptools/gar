@@ -178,7 +178,7 @@ pub fn hash_of_path<P: AsRef<Path>>(path: P) -> Result<Hash, io::Error> {
 	// FileType isn't an enum (imagine: its membership size would vary per platform if it was!)
 	// so working with it ends up being a series of unappealing "if" blocks rather than a nice clean exhaustive match.
 	if metadata.is_file() {
-		return Ok(hash_of_stream(&mut fs::File::open(path)?, metadata.size())?);
+		return Ok(hash_of_file(path)?.0);
 	}
 	if metadata.is_symlink() {
 		return hash_of_symlink(path);
@@ -192,22 +192,21 @@ pub fn hash_of_path<P: AsRef<Path>>(path: P) -> Result<Hash, io::Error> {
 
 		// For each entry: recurse on hashing; append buffer.
 		for ent in entries.iter() {
-			let hash = hash_of_path(ent.path())?;
 			let ft = ent.file_type()?;
 			let file_name = ent.file_name(); // for lifetime purposes.
 			let fnb = file_name.as_os_str().as_encoded_bytes();
 
 			if ft.is_file() {
-				// Asking if it's executable is rather graceful in Rust...
-				if mode_is_executable(ent.metadata()?.permissions().mode()) {
+				let (hash, executable) = hash_of_file(ent.path())?;
+				if executable {
 					tha.append_executable(fnb, &hash);
 				} else {
 					tha.append_file(fnb, &hash);
 				}
 			} else if ft.is_symlink() {
-				tha.append_symlink(fnb, &hash);
+				tha.append_symlink(fnb, &hash_of_symlink(ent.path())?);
 			} else if ft.is_dir() {
-				tha.append_dir(fnb, &hash);
+				tha.append_dir(fnb, &hash_of_path(ent.path())?);
 			} else {
 				panic!("unknown file type")
 			}
@@ -215,4 +214,15 @@ pub fn hash_of_path<P: AsRef<Path>>(path: P) -> Result<Hash, io::Error> {
 		return Ok(tha.finish());
 	}
 	panic!("unknown file type")
+}
+
+/// Returns the blob hash of a regular file, and whether git would give it mode 100755.
+///
+/// Size, exec bit, and content all come from one open fd,
+/// so they describe the same inode even if the path is chmod'ed or renamed over meanwhile.
+fn hash_of_file<P: AsRef<Path>>(path: P) -> Result<(Hash, bool), io::Error> {
+	let mut file = fs::File::open(path)?;
+	let meta = file.metadata()?;
+	let hash = hash_of_stream(&mut file, meta.size())?;
+	Ok((hash, mode_is_executable(meta.permissions().mode())))
 }
