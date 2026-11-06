@@ -80,6 +80,8 @@ Gar's main commands are `gar init` and `gar add`.
 - `gar add <path>` returns the hash when it's done.  You'll then be able to find the snapshot of your files in `.gar/treecas/{ab}/{cd}/{hash}`.
 - `gar path <hash>` prints the absolute path of that snapshot.
   (Scripts, use this!  The sharded layout is Gar's business; you shouldn't have to compute it yourself.)
+- `gar gc --demands <file>` removes everything from the heap except the trees the demands files name.
+  (See the garbage collection section below.)
 
 A "gar heap" consists of the following two (or three) directory trees:
 
@@ -105,6 +107,25 @@ so a write to an original in that mode would corrupt the gar heap.  The CLI deli
 
 Gar heaps are trustless structures.  They can be validated entirely from their contents.
 For each file in the blobcas, its hash can be computed freshly from its contents.
+
+### garbage collection
+
+Gar heaps are append-only in normal operation; `gar gc` is how disk space comes back.
+
+`gar gc --demands <file>` removes every tree not named by a demands file,
+and then every blob no kept tree still links to.
+A demands file names the treehashes to keep, one per line
+(the exact format is specified in [./README_formats.md](./README_formats.md)).
+The flag can be repeated, and the kept set is the union of all the files.
+Demanding nothing is legal but must be said explicitly, with an empty file: a bare `gar gc` is refused.
+
+Gc fails closed: a demands file that doesn't parse means nothing is deleted at all,
+and a demanded tree that isn't in the heap is a failing exit code
+(though the gc still completes for everything else first).
+
+Gc must not run concurrently with `gar add`:
+an add may hardlink to a blob the sweep is about to judge unreferenced.
+Nothing locks against this yet, so for now, it's the caller's job to schedule gc in a quiet moment.
 
 ### Supported Filesystem Attributes and Features
 
