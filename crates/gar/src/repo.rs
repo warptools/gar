@@ -173,6 +173,7 @@ pub fn find_repo_dir(dir: &Path) -> Result<Option<PathBuf>, io::Error> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use rstest::{fixture, rstest};
 
 	/// A scratch dir to work in.  Named after the test, so a leaked one is traceable.
 	fn scratch(name: &str) -> tempdir::TempDir {
@@ -222,37 +223,44 @@ mod tests {
 		assert!(repo.treeidx_path().is_dir());
 	}
 
-	#[test]
-	fn find_repo_dir_finds_the_dir_itself() {
-		let td = scratch("find-self");
-		init_at(td.path()).expect("creating a repo");
-		let found = find_repo_dir(td.path()).expect("no io errors");
-		assert_eq!(found.as_deref(), Some(td.path()));
+	/// One layout holds every `find_repo_dir_from` scenario, so each case is only a start dir and an expectation:
+	///
+	/// ```text
+	/// repo/.gar/          a real repo
+	/// repo/a/b/c/
+	/// repo/mid/.gar       a plain file, not a repo
+	/// repo/mid/deep/
+	/// bare/a/b/c/         no repo anywhere above, within the scratch dir
+	/// ```
+	#[fixture]
+	fn find_repo_dir_fixture() -> tempdir::TempDir {
+		let td = scratch("find-repo-dir");
+		let root = td.path();
+		init_at(root.join("repo")).expect("creating the repo");
+		for dir in ["repo/a/b/c", "repo/mid/deep", "bare/a/b/c"] {
+			fs::create_dir_all(root.join(dir)).expect("can make subdirs");
+		}
+		fs::write(root.join("repo/mid/.gar"), b"not a dir\n").expect("write the imposter");
+		td
 	}
 
-	#[test]
-	fn find_repo_dir_finds_an_ancestor() {
-		let td = scratch("find-ancestor");
-		init_at(td.path()).expect("creating a repo");
-		let deep = td.path().join("a/b/c");
-		fs::create_dir_all(&deep).expect("can make subdirs");
-		let found = find_repo_dir(&deep).expect("no io errors");
-		assert_eq!(found.as_deref(), Some(td.path()));
-	}
-
-	#[test]
-	fn find_repo_dir_finds_nothing_when_there_is_nothing() {
-		let td = scratch("find-nothing");
-		let deep = td.path().join("a/b/c");
-		fs::create_dir_all(&deep).expect("can make subdirs");
-		let found = find_repo_dir(&deep).expect("no io errors");
-		// Asserted as "nothing in our scratch tree" rather than "nothing at all":
-		// the walk continues past the tempdir to the filesystem root, and what lives up
-		// there is the machine's business, not this test's.
-		assert!(
-			found.as_ref().map_or(true, |d| !d.starts_with(td.path())),
-			"found a repo inside the scratch tree: {found:?}"
-		);
+	/// Results are compared relative to the layout root, and anything found outside it reads as `None`:
+	/// the walk continues past the tempdir to the filesystem root,
+	/// and what lives up there is the machine's business, not this test's.
+	#[rstest]
+	#[case::the_dir_itself("repo", Some("repo"))]
+	#[case::an_ancestor("repo/a/b/c", Some("repo"))]
+	#[case::past_a_gar_file("repo/mid/deep", Some("repo"))]
+	#[case::nothing("bare/a/b/c", None)]
+	fn find_repo_dir_from(
+		find_repo_dir_fixture: tempdir::TempDir,
+		#[case] start: &str,
+		#[case] want: Option<&str>,
+	) {
+		let root = find_repo_dir_fixture.path();
+		let found = find_repo_dir(&root.join(start)).expect("no io errors");
+		let found = found.as_deref().and_then(|d| d.strip_prefix(root).ok());
+		assert_eq!(found, want.map(Path::new));
 	}
 
 	/// An upward walk of a relative path would end at "" rather than at the filesystem root,
@@ -274,20 +282,6 @@ mod tests {
 			.create()
 			.expect_err("create must refuse a file where a subdir belongs");
 		assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
-	}
-
-	#[test]
-	fn find_repo_dir_skips_a_gar_file_and_finds_the_real_ancestor() {
-		let td = scratch("find-skip-gar-file");
-		init_at(td.path()).expect("creating the real repo");
-		let mid = td.path().join("mid");
-		fs::create_dir(&mid).expect("mkdir mid");
-		// A plain file named ".gar" -- not a repo.
-		fs::write(mid.join(".gar"), b"not a dir\n").expect("write the imposter");
-		let deep = mid.join("deep");
-		fs::create_dir(&deep).expect("mkdir deep");
-		let found = find_repo_dir(&deep).expect("no io errors");
-		assert_eq!(found.as_deref(), Some(td.path()));
 	}
 
 	fn some_hash() -> gittree::Hash {
