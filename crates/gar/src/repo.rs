@@ -233,7 +233,7 @@ mod tests {
 	/// bare/a/b/c/         no repo anywhere above, within the scratch dir
 	/// ```
 	#[fixture]
-	fn find_layout() -> tempdir::TempDir {
+	fn find_repo_dir_fixture() -> tempdir::TempDir {
 		let td = scratch("find-repo-dir");
 		let root = td.path();
 		init_at(root.join("repo")).expect("creating the repo");
@@ -253,11 +253,11 @@ mod tests {
 	#[case::past_a_gar_file("repo/mid/deep", Some("repo"))]
 	#[case::nothing("bare/a/b/c", None)]
 	fn find_repo_dir_from(
-		find_layout: tempdir::TempDir,
+		find_repo_dir_fixture: tempdir::TempDir,
 		#[case] start: &str,
 		#[case] want: Option<&str>,
 	) {
-		let root = find_layout.path();
+		let root = find_repo_dir_fixture.path();
 		let found = find_repo_dir(&root.join(start)).expect("no io errors");
 		let found = found.as_deref().and_then(|d| d.strip_prefix(root).ok());
 		assert_eq!(found, want.map(Path::new));
