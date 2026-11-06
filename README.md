@@ -73,11 +73,13 @@ And based on the size of directories on your filesystem.  And such fun things as
 Features
 --------
 
-Gar has two main commands: `gar init` and `gar add`.
+Gar's main commands are `gar init` and `gar add`.
 
 - `gar init` creates a "gar heap", which is a "`.gar/`" directory and few more directories with that.
 - `gar add <path>` scans the given path, hashes all its contents, and stores a snapshot of it into the nearest gar heap it can find.
 - `gar add <path>` returns the hash when it's done.  You'll then be able to find the snapshot of your files in `.gar/treecas/{ab}/{cd}/{hash}`.
+- `gar path <hash>` prints the absolute path of that snapshot.
+  (Scripts, use this!  The sharded layout is Gar's business; you shouldn't have to compute it yourself.)
 
 A "gar heap" consists of the following two (or three) directory trees:
 
