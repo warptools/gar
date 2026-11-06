@@ -3,6 +3,8 @@ mod exitcodes;
 mod paths;
 
 use gar::add;
+use gar::demands;
+use gar::gc;
 use gar::repo;
 
 mod clap {
@@ -113,6 +115,47 @@ fn main() {
 			// The path is absolute because repo_dir always is: every route to it starts from the cwd.
 			println!("{}", tree_path.display());
 			process::exit(exitcodes::SUCCESS);
+		},
+		cmds::Subcommands::Gc(args) => {
+			require_repo(&repo, &root_args.repo);
+			// Every demands file is read and parsed in full before anything is deleted:
+			// a gc driven by a half-understood demands list must not get to touch the heap.
+			let mut demanded = std::collections::HashSet::new();
+			for file in &args.demands {
+				let text = match std::fs::read_to_string(file) {
+					Ok(text) => text,
+					Err(e) => {
+						eprintln!("gc: reading demands file {:?}: {}", file, e);
+						process::exit(exitcodes::IO_ERROR);
+					},
+				};
+				match demands::parse(&text) {
+					Ok(hashes) => demanded.extend(hashes),
+					Err(e) => {
+						eprintln!("gc: demands file {:?}: {}", file, e);
+						process::exit(exitcodes::USAGE);
+					},
+				}
+			}
+			match gc::gc(&repo, &demanded) {
+				Ok(report) => {
+					eprintln!(
+						"gc: kept {} trees; removed {} trees and {} blobs",
+						report.trees_kept, report.trees_removed, report.blobs_removed
+					);
+					if !report.absent_demands.is_empty() {
+						for hash in &report.absent_demands {
+							eprintln!("gc: demanded tree {} is not in this heap", hash.as_hex());
+						}
+						process::exit(exitcodes::DEMAND_NOT_IN_STOCK);
+					}
+					process::exit(exitcodes::SUCCESS);
+				},
+				Err(e) => {
+					eprintln!("{e}");
+					process::exit(exitcodes::IO_ERROR);
+				},
+			}
 		},
 		cmds::Subcommands::Hash(_) => unreachable!("handled before repo search"),
 	};

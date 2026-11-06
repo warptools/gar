@@ -31,6 +31,9 @@ pub enum Subcommands {
 
 	/// print the absolute path of a tree already in Gar storage.
 	Path(PathCmd),
+
+	/// remove everything from Gar storage except the trees named by demands files.
+	Gc(GcCmd),
 }
 
 #[derive(clap::Args, Debug)]
@@ -46,6 +49,17 @@ pub struct AddCmd {
 pub struct HashCmd {
 	/// path to the file, directory, or symlink to hash.
 	pub path: PathBuf,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct GcCmd {
+	/// path to a demands file: the treehashes to keep, one per line.
+	/// Repeatable; the kept set is the union of all the files.
+	///
+	/// At least one file is required: a gc that's meant to keep nothing has to say so
+	/// with an explicitly empty file, because a bare "gc" deleting everything is a footgun.
+	#[arg(long = "demands", required = true)]
+	pub demands: Vec<PathBuf>,
 }
 
 #[derive(clap::Args, Debug)]
