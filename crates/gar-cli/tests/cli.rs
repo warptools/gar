@@ -290,3 +290,39 @@ fn add_of_an_already_stored_tree_succeeds() {
 	assert_eq!(r2.code, 0, "stderr: {}", r2.stderr);
 	assert_eq!(r1.stdout, r2.stdout);
 }
+
+/// Each tree entry must be linked to the blob whose `-x` suffix matches its own mode.
+///
+/// The two files have the same content, so both blobs exist either way;
+/// only inode identity shows which blob each tree entry actually shares.
+#[test]
+fn add_links_tree_entries_to_the_blob_matching_their_exec_bit() {
+	use std::os::unix::fs::MetadataExt;
+	use std::os::unix::fs::PermissionsExt;
+
+	let td = scratch("add-exec-agreement");
+	gar(td.path(), &["init"]);
+	let stuff = td.path().join("stuff");
+	std::fs::create_dir(&stuff).expect("mkdir stuff");
+	std::fs::write(stuff.join("a_file"), b"a file\n").expect("write a file");
+	std::fs::write(stuff.join("a_script"), b"a file\n").expect("write a script");
+	std::fs::set_permissions(stuff.join("a_script"), PermissionsExt::from_mode(0o755))
+		.expect("chmod the script");
+
+	let r = gar(td.path(), &["add", "stuff"]);
+	assert_eq!(r.code, 0, "stderr: {}", r.stderr);
+	let tree = treecas_entry(td.path(), r.stdout.trim());
+	let blobs = td.path().join(".gar/blobcas/29/09");
+	let ino = |p: PathBuf| std::fs::metadata(&p).expect("stat").ino();
+
+	assert_eq!(
+		ino(tree.join("a_file")),
+		ino(blobs.join("2909489adcb095aa795a9a7e6d92db735d0a0ced0782c43496675bdb7beec3ce")),
+		"a_file should share the plain blob"
+	);
+	assert_eq!(
+		ino(tree.join("a_script")),
+		ino(blobs.join("2909489adcb095aa795a9a7e6d92db735d0a0ced0782c43496675bdb7beec3ce-x")),
+		"a_script should share the -x blob"
+	);
+}
