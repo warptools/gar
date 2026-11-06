@@ -3,71 +3,10 @@
 //! Exit codes and messages are part of the interface of a CLI tool,
 //! so they're worth pinning down here rather than only testing the library innards.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+mod common;
 
-/// Locates the `gar` binary to exercise.
-///
-/// Cargo builds bin targets before running integration tests, and puts the test binary
-/// in `{target}/{profile}/deps/` -- so the bin we want is two levels up, in `{target}/{profile}/`.
-///
-/// Deliberately found at runtime rather than with `env!("CARGO_BIN_EXE_gar")`:
-/// compile-time environment capture leans on cargo's cache invalidation to stay true,
-/// and this route also follows a debug or release build without being told which we're in.
-fn gar_bin() -> PathBuf {
-	let test_bin = std::env::current_exe().expect("the running test binary has a path");
-	let profile_dir = test_bin
-		.parent()
-		.and_then(Path::parent)
-		.expect("test binary lives at {target}/{profile}/deps/{name}");
-	let bin = profile_dir.join("gar");
-	assert!(bin.exists(), "no gar binary at {bin:?}");
-	bin
-}
-
-struct Run {
-	code: i32,
-	stdout: String,
-	stderr: String,
-}
-
-/// Runs gar with the given args and working directory, capturing everything about the result.
-fn gar(cwd: &Path, args: &[&str]) -> Run {
-	let out = Command::new(gar_bin())
-		.args(args)
-		.current_dir(cwd)
-		.output()
-		.expect("gar binary is executable");
-	Run {
-		code: out
-			.status
-			.code()
-			.expect("gar exited rather than being signalled"),
-		stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-		stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-	}
-}
-
-/// A scratch dir to work in.  Named after the test, so a leaked one is traceable.
-fn scratch(name: &str) -> tempdir::TempDir {
-	tempdir::TempDir::new(&format!("gar-test-{name}-")).expect("can make a tempdir")
-}
-
-/// Where a tree lands in the heap under `root`, per the sharded layout.
-///
-/// Spelled out here rather than borrowed from the library,
-/// so a change to the layout shows up as test failures.
-fn treecas_entry(root: &Path, hash: &str) -> PathBuf {
-	root.join(".gar/treecas")
-		.join(&hash[0..2])
-		.join(&hash[2..4])
-		.join(hash)
-}
-
-/// Paths from a tempdir are passed as args; this is the unwrap for that.
-fn arg(p: &Path) -> &str {
-	p.to_str().expect("tempdir paths are utf8")
-}
+use common::{arg, gar, scratch, treecas_entry};
+use std::path::Path;
 
 #[test]
 fn init_in_cwd() {
