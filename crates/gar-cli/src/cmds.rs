@@ -34,6 +34,12 @@ pub enum Subcommands {
 
 	/// remove everything from Gar storage except the trees named by demands files.
 	Gc(GcCmd),
+
+	/// write a tree already in Gar storage to stdout, as a tar stream.
+	Export(ExportCmd),
+
+	/// read a tar stream from stdin into Gar storage, and print the treehash it stored as.
+	Import(ImportCmd),
 }
 
 #[derive(clap::Args, Debug)]
@@ -68,6 +74,22 @@ pub struct PathCmd {
 	/// Uppercase is rejected, not downcased: gar itself only ever prints lowercase.
 	#[arg(value_parser = parse_treehash)]
 	pub hash: gittree::Hash,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct ExportCmd {
+	/// treehash to export: exactly 64 lowercase hex characters.
+	#[arg(value_parser = parse_treehash)]
+	pub hash: gittree::Hash,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct ImportCmd {
+	/// treehash the stream is expected to store as.  A mismatch is a failing exit,
+	/// but the stored tree remains in the heap under the hash it actually has:
+	/// a Gar heap is append-only, and removal is gc's job.
+	#[arg(long, value_parser = parse_treehash)]
+	pub expect: Option<gittree::Hash>,
 }
 
 /// Parses a treehash argument strictly, per `Hash::from_hex_strict`:

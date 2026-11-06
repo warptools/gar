@@ -18,3 +18,5 @@ clap.workspace = true
 [dev-dependencies]
 tempdir.workspace = true
 rstest.workspace = true
+# For crafting the hostile archives the import tests feed to gar.
+tar.workspace = true

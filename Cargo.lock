@@ -424,6 +424,7 @@ dependencies = [
  "gar",
  "gittree",
  "rstest",
+ "tar",
  "tempdir",
 ]
 
