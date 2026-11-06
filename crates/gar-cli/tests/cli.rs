@@ -307,3 +307,103 @@ fn add_of_an_already_stored_tree_succeeds() {
 	assert_eq!(r2.code, 0, "stderr: {}", r2.stderr);
 	assert_eq!(r1.stdout, r2.stdout);
 }
+
+/// `gar path` is the resolution boundary for other tools: they hand it a hash and use
+/// the printed path, never computing the treecas layout themselves.
+/// So what it prints must be exactly one line: the absolute path, usable as-is out of a pipe.
+#[test]
+fn path_prints_the_stored_tree_and_nothing_else() {
+	let td = scratch("path-found");
+	gar(td.path(), &["init"]);
+	std::fs::create_dir(td.path().join("stuff")).expect("mkdir stuff");
+	std::fs::write(td.path().join("stuff/a_file"), b"a file\n").expect("write a file");
+	let hash = gar(td.path(), &["add", "stuff"]).stdout.trim().to_owned();
+
+	let r = gar(td.path(), &["path", &hash]);
+	assert_eq!(r.code, 0, "stderr: {}", r.stderr);
+	let printed = r
+		.stdout
+		.strip_suffix('\n')
+		.expect("output ends with one newline");
+	assert!(
+		!printed.contains('\n'),
+		"one line only; stdout: {:?}",
+		r.stdout
+	);
+	let printed = Path::new(printed);
+	assert!(printed.is_absolute(), "printed: {printed:?}");
+	assert!(printed.is_dir(), "printed: {printed:?}");
+	// Round trip: hashing what the printed path names gives back the hash asked about.
+	let rehash = gar(td.path(), &["hash", arg(printed)]);
+	assert_eq!(rehash.stdout.trim(), hash);
+}
+
+/// The path must come out absolute even when the repo was found by searching upward from the cwd.
+#[test]
+fn path_from_a_subdir_is_still_absolute() {
+	let td = scratch("path-from-subdir");
+	gar(td.path(), &["init"]);
+	let sub = td.path().join("sub");
+	std::fs::create_dir(&sub).expect("can make a subdir");
+	std::fs::write(sub.join("a_file"), b"a file\n").expect("can write a file");
+	let hash = gar(&sub, &["add", "."]).stdout.trim().to_owned();
+
+	let r = gar(&sub, &["path", &hash]);
+	assert_eq!(r.code, 0, "stderr: {}", r.stderr);
+	let printed = Path::new(r.stdout.trim_end());
+	assert!(printed.is_absolute(), "printed: {printed:?}");
+	assert_eq!(printed, treecas_entry(td.path(), &hash));
+}
+
+#[test]
+fn path_of_a_tree_not_in_the_heap_reports_not_in_stock() {
+	let td = scratch("path-not-in-stock");
+	gar(td.path(), &["init"]);
+	let absent = "0000000000000000000000000000000000000000000000000000000000000000";
+	let r = gar(td.path(), &["path", absent]);
+	assert_eq!(r.code, 6, "stdout: {}, stderr: {}", r.stdout, r.stderr);
+	assert!(
+		r.stdout.is_empty(),
+		"nothing resolved, so stdout stays empty; stdout: {}",
+		r.stdout
+	);
+	assert!(
+		r.stderr.contains(absent),
+		"the report should name the hash asked about; stderr: {}",
+		r.stderr
+	);
+}
+
+/// The hash argument is strict: exactly 64 lowercase hex characters, or it's a usage error.
+/// Uppercase in particular is rejected, not downcased.
+#[test]
+fn path_rejects_malformed_hashes_as_usage_errors() {
+	let td = scratch("path-malformed");
+	gar(td.path(), &["init"]);
+	for bad in [
+		"a".repeat(63),
+		"a".repeat(65),
+		"g".repeat(64),
+		"A".repeat(64),
+	] {
+		let r = gar(td.path(), &["path", &bad]);
+		assert_eq!(r.code, 1, "hash {bad:?}; stderr: {}", r.stderr);
+		assert!(
+			r.stdout.is_empty(),
+			"hash {bad:?} resolved to something; stdout: {}",
+			r.stdout
+		);
+	}
+}
+
+/// `path` needs a repo, same as `add`.
+/// Pinned with an explicit `--repo` so no ancestor of the tempdir can satisfy a search.
+#[test]
+fn path_without_a_repo_reports_no_repo() {
+	let td = scratch("path-no-repo");
+	let r = gar(
+		td.path(),
+		&["--repo", arg(td.path()), "path", &"a".repeat(64)],
+	);
+	assert_eq!(r.code, 3, "stdout: {}, stderr: {}", r.stdout, r.stderr);
+}

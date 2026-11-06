@@ -8,7 +8,7 @@ use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Hash([u8; 32]);
 
 impl Debug for Hash {
