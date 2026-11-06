@@ -173,7 +173,7 @@ pub fn find_repo_dir(dir: &Path) -> Result<Option<PathBuf>, io::Error> {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use rstest::rstest;
+	use rstest::{fixture, rstest};
 
 	/// A scratch dir to work in.  Named after the test, so a leaked one is traceable.
 	fn scratch(name: &str) -> tempdir::TempDir {
@@ -223,7 +223,7 @@ mod tests {
 		assert!(repo.treeidx_path().is_dir());
 	}
 
-	/// One layout holds every scenario, so each case is only a start dir and an expectation:
+	/// One layout holds every `find_repo_dir_from` scenario, so each case is only a start dir and an expectation:
 	///
 	/// ```text
 	/// repo/.gar/          a real repo
@@ -232,16 +232,8 @@ mod tests {
 	/// repo/mid/deep/
 	/// bare/a/b/c/         no repo anywhere above, within the scratch dir
 	/// ```
-	///
-	/// Results are compared relative to the scratch dir, and anything found outside it reads as `None`:
-	/// the walk continues past the tempdir to the filesystem root,
-	/// and what lives up there is the machine's business, not this test's.
-	#[rstest]
-	#[case::the_dir_itself("repo", Some("repo"))]
-	#[case::an_ancestor("repo/a/b/c", Some("repo"))]
-	#[case::past_a_gar_file("repo/mid/deep", Some("repo"))]
-	#[case::nothing("bare/a/b/c", None)]
-	fn find_repo_dir_from(#[case] start: &str, #[case] want: Option<&str>) {
+	#[fixture]
+	fn find_layout() -> tempdir::TempDir {
 		let td = scratch("find-repo-dir");
 		let root = td.path();
 		init_at(root.join("repo")).expect("creating the repo");
@@ -249,7 +241,23 @@ mod tests {
 			fs::create_dir_all(root.join(dir)).expect("can make subdirs");
 		}
 		fs::write(root.join("repo/mid/.gar"), b"not a dir\n").expect("write the imposter");
+		td
+	}
 
+	/// Results are compared relative to the layout root, and anything found outside it reads as `None`:
+	/// the walk continues past the tempdir to the filesystem root,
+	/// and what lives up there is the machine's business, not this test's.
+	#[rstest]
+	#[case::the_dir_itself("repo", Some("repo"))]
+	#[case::an_ancestor("repo/a/b/c", Some("repo"))]
+	#[case::past_a_gar_file("repo/mid/deep", Some("repo"))]
+	#[case::nothing("bare/a/b/c", None)]
+	fn find_repo_dir_from(
+		find_layout: tempdir::TempDir,
+		#[case] start: &str,
+		#[case] want: Option<&str>,
+	) {
+		let root = find_layout.path();
 		let found = find_repo_dir(&root.join(start)).expect("no io errors");
 		let found = found.as_deref().and_then(|d| d.strip_prefix(root).ok());
 		assert_eq!(found, want.map(Path::new));
