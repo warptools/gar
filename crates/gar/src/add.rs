@@ -97,6 +97,7 @@ pub fn add(
 	Ok(hash)
 }
 
+#[derive(Clone, Copy, Debug)]
 pub enum FaithMode {
 	/// Copy files into the blobstore while adding to gar.
 	///
@@ -158,6 +159,34 @@ impl AddWork<'_> {
 		}
 	}
 
+	/// Makes `blobcas_path` a hardlink to `source` -- or accepts whatever is already there.
+	///
+	/// A CAS name is never replaced once it exists: replacing it would split the inode family
+	/// shared with existing treecas links, and a racing add can see the swap as a `NotFound`
+	/// in the middle of its own linking.  `link` never clobbers, so an `AlreadyExists` from it
+	/// means the blob is already stored, and that's dedup doing its job: success.
+	///
+	/// Placement is optimistic: shard directories are created only after a `NotFound` says they're missing.
+	/// That trades one failed `link` on each shard's first blob for skipping two `mkdir` calls on every other.
+	fn place_blob(
+		&self,
+		source: &Path,
+		blobcas_path: &Path,
+		hash: &gittree::Hash,
+	) -> io::Result<()> {
+		match fs::hard_link(source, blobcas_path) {
+			Err(e) if e.kind() == io::ErrorKind::NotFound => {
+				self.repo.create_blob_shard(hash)?;
+				match fs::hard_link(source, blobcas_path) {
+					Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+					r => r,
+				}
+			},
+			Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+			r => r,
+		}
+	}
+
 	/// Returns the blob hash, and whether the file was stored as executable (which the tree entry mode must match).
 	fn add_recurse_file(&self, path: &Path) -> io::Result<(gittree::Hash, bool)> {
 		// Files:
@@ -195,9 +224,8 @@ impl AddWork<'_> {
 		// (We can't just add executable bit back onto things in the treecas, because that's...
 		// not how hardlinks work, unfortunately.  Oh how I wish it was!  But, nope.)
 		let blobcas_path = self.repo.blob_path(&hash, executable);
-		self.repo.create_blob_shard(&hash)?;
 		// BRANCH: are we in paranoia mode, or are we hardlinking orignals and trusting in a lack of mutation?
-		let blobcas_result: io::Result<_> = match self.faithmode {
+		match self.faithmode {
 			FaithMode::Copy => {
 				// Unimplemented.  Notes toward it, because this design thinking is easy to lose:
 				//
@@ -245,22 +273,12 @@ impl AddWork<'_> {
 			},
 
 			// In LinkOriginals mode, hardlinks are made into the blobcas straight to the original file.
-			// `fs::hard_link` fails with `AlreadyExists` rather than replacing an existing target,
-			// which is exactly the non-clobbering behavior wanted here (see the inode note in the Copy arm).
 			// However, this is dangerous if the original file is ever modified again: hardlinks effectively transmit mutations.
-			FaithMode::LinkOriginals => fs::hard_link(self.scan_root.join(path), &blobcas_path),
+			FaithMode::LinkOriginals => {
+				self.place_blob(&self.scan_root.join(path), &blobcas_path, &hash)?
+			},
 			FaithMode::Move => todo!(),
 			// REVIEW: what do if permissions aren't normal?  Copy instead?  Add a mode for halt-if-not-ezlinkable?
-		};
-		match blobcas_result {
-			Ok(_) => {}, // cool
-			Err(e) => {
-				if e.kind() == io::ErrorKind::AlreadyExists {
-					// cool
-				} else {
-					return Err(e);
-				}
-			},
 		};
 
 		// Second: hardlink a new entry in the treecas to the blobcas.
