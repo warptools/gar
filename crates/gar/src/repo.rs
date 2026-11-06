@@ -63,6 +63,53 @@ impl Repo {
 	pub fn treeidx_path(&self) -> &Path {
 		&self.treeidx_path
 	}
+
+	/// Where a blob lives in the blobcas.  Executable blobs are stored separately, with a `-x` suffix.
+	pub fn blob_path(&self, hash: &gittree::Hash, executable: bool) -> PathBuf {
+		let mut name = hash.as_hex();
+		if executable {
+			name.push_str("-x");
+		}
+		shard_dir(&self.blobcas_path, hash).join(name)
+	}
+
+	/// Where a tree lives in the treecas.
+	pub fn tree_path(&self, hash: &gittree::Hash) -> PathBuf {
+		shard_dir(&self.treecas_path, hash).join(hash.as_hex())
+	}
+
+	/// Creates the shard dirs that `blob_path` for this hash sits in, if they're not already there.
+	pub fn create_blob_shard(&self, hash: &gittree::Hash) -> io::Result<()> {
+		create_shard(&self.blobcas_path, hash)
+	}
+
+	/// Creates the shard dirs that `tree_path` for this hash sits in, if they're not already there.
+	pub fn create_tree_shard(&self, hash: &gittree::Hash) -> io::Result<()> {
+		create_shard(&self.treecas_path, hash)
+	}
+}
+
+/// The directory a CAS entry sits in: `{cas_root}/{ab}/{cd}`, from the first four hex chars of the hash.
+///
+/// Sharding keeps any one directory from accumulating millions of entries.
+/// The layout is specified in README_formats.md.
+fn shard_dir(cas_root: &Path, hash: &gittree::Hash) -> PathBuf {
+	let hex = hash.as_hex();
+	cas_root.join(&hex[0..2]).join(&hex[2..4])
+}
+
+/// Creates the two shard levels under `cas_root` for this hash.
+///
+/// Shard dirs are made lazily, as entries arrive, rather than all 65536 at init.
+/// Concurrent adds may race to make the same shard, and that's fine.
+/// Nothing above the shard levels is made: a missing CAS root stays an error.
+fn create_shard(cas_root: &Path, hash: &gittree::Hash) -> io::Result<()> {
+	let inner = shard_dir(cas_root, hash);
+	let outer = inner
+		.parent()
+		.expect("shard_dir returns a path two levels below the root");
+	create_dir_if_absent(outer)?;
+	create_dir_if_absent(&inner)
 }
 
 /// `fs::create_dir`, counting an already-present directory as success.
@@ -241,5 +288,35 @@ mod tests {
 		fs::create_dir(&deep).expect("mkdir deep");
 		let found = find_repo_dir(&deep).expect("no io errors");
 		assert_eq!(found.as_deref(), Some(td.path()));
+	}
+
+	fn some_hash() -> gittree::Hash {
+		gittree::Hash::from_hex("2909489adcb095aa795a9a7e6d92db735d0a0ced0782c43496675bdb7beec3ce")
+			.expect("valid hex")
+	}
+
+	/// A second creation is what a concurrent add racing to the same shard looks like.
+	#[test]
+	fn create_shard_makes_the_entry_parent_and_tolerates_repeats() {
+		let td = scratch("create-shard");
+		let repo = init_at(td.path()).expect("creating a repo");
+		let h = some_hash();
+		repo.create_blob_shard(&h).expect("first shard creation");
+		repo.create_blob_shard(&h).expect("repeated shard creation");
+		assert!(repo.blob_path(&h, false).parent().is_some_and(Path::is_dir));
+		repo.create_tree_shard(&h).expect("tree shard creation");
+		assert!(repo.tree_path(&h).parent().is_some_and(Path::is_dir));
+	}
+
+	#[test]
+	fn create_shard_does_not_make_a_missing_cas_root() {
+		let td = scratch("create-shard-no-root");
+		let repo = init_at(td.path()).expect("creating a repo");
+		fs::remove_dir(repo.blobcas_path()).expect("removing the blobcas");
+		let err = repo
+			.create_blob_shard(&some_hash())
+			.expect_err("shard creation without a blobcas");
+		assert_eq!(err.kind(), io::ErrorKind::NotFound);
+		assert!(!repo.blobcas_path().exists());
 	}
 }

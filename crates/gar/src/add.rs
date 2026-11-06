@@ -40,7 +40,8 @@ pub fn add(
 	let hash = w.add_recurse(Path::new(""), &fs::metadata(w.scan_root)?)?;
 
 	// The final commit: move the whole wiptree into CAS place.
-	let dest_path: PathBuf = repo.treecas_path().join(hash.as_hex());
+	let dest_path: PathBuf = repo.tree_path(&hash);
+	repo.create_tree_shard(&hash)?;
 	let treecas_result = fs::rename(&td, &dest_path);
 
 	// The error handling for this last step, however, is... wild.
@@ -147,7 +148,7 @@ impl AddWork<'_> {
 		// TODO: this whole function is somewhat silly.  It is only used at the root, and even there does not do anything special.  Remove it.
 		let path_ft = path_meta.file_type();
 		if path_ft.is_file() {
-			self.add_recurse_file(path, path_meta)
+			self.add_recurse_file(path).map(|(hash, _)| hash)
 		} else if path_ft.is_symlink() {
 			self.add_recurse_symlink(path)
 		} else if path_ft.is_dir() {
@@ -157,7 +158,8 @@ impl AddWork<'_> {
 		}
 	}
 
-	fn add_recurse_file(&self, path: &Path, path_meta: &fs::Metadata) -> io::Result<gittree::Hash> {
+	/// Returns the blob hash, and whether the file was stored as executable (which the tree entry mode must match).
+	fn add_recurse_file(&self, path: &Path) -> io::Result<(gittree::Hash, bool)> {
 		// Files:
 		// - First get it in the blobcas.
 		// - Then hardlink it into the treecas.
@@ -178,10 +180,13 @@ impl AddWork<'_> {
 		// TODO: if we have to copy, would rather hold off on this so we don't read twice.
 		// // ^ ok this turns out untrue; attempts to tee in memory have been poor because smarter kernel calls that just do "copy" are faster.
 		// //     so instead what we should really think about here is what's safest in the face of concurrent activity (as much as possible, and from the pov of the cas).
-		let hash = gittree::hash_of_stream(
-			&mut fs::File::open(self.scan_root.join(path))?,
-			path_meta.size(),
-		)?;
+		//
+		// Size, exec bit, and content all come from this one open fd,
+		// so they describe the same inode even if the path is chmod'ed or renamed over mid-walk.
+		let mut file = fs::File::open(self.scan_root.join(path))?;
+		let file_meta = file.metadata()?;
+		let executable = gittree::mode_is_executable(file_meta.permissions().mode());
+		let hash = gittree::hash_of_stream(&mut file, file_meta.size())?;
 
 		// First: Populate the blobcas, either by copy or by hardlink.
 		// There is one piece of data we have to represent in the blob name beyond the hash itself:
@@ -189,12 +194,8 @@ impl AddWork<'_> {
 		// we have to store the executable bit as a suffix of the blobhash.
 		// (We can't just add executable bit back onto things in the treecas, because that's...
 		// not how hardlinks work, unfortunately.  Oh how I wish it was!  But, nope.)
-		let attrib_suffix = if gittree::mode_is_executable(path_meta.permissions().mode()) {
-			"-x"
-		} else {
-			""
-		};
-		let blobcas_path = self.repo.blobcas_path().join(hash.as_hex() + attrib_suffix);
+		let blobcas_path = self.repo.blob_path(&hash, executable);
+		self.repo.create_blob_shard(&hash)?;
 		// BRANCH: are we in paranoia mode, or are we hardlinking orignals and trusting in a lack of mutation?
 		let blobcas_result: io::Result<_> = match self.faithmode {
 			FaithMode::Copy => {
@@ -266,7 +267,7 @@ impl AddWork<'_> {
 		fs::hard_link(&blobcas_path, self.wiptree_root.join(path))?;
 
 		// And return the hash so dir treehashing can accumulate.
-		Ok(hash)
+		Ok((hash, executable))
 	}
 
 	fn add_recurse_symlink(&self, path: &Path) -> io::Result<gittree::Hash> {
@@ -300,8 +301,8 @@ impl AddWork<'_> {
 			let fnb = file_name.as_os_str().as_encoded_bytes();
 
 			if ft.is_file() {
-				let hash = self.add_recurse_file(&path.join(&file_name), &ent.metadata()?)?;
-				if gittree::mode_is_executable(ent.metadata()?.permissions().mode()) {
+				let (hash, executable) = self.add_recurse_file(&path.join(&file_name))?;
+				if executable {
 					// TODO: we should probably normalize that if any of those bits are set, all of them are set.
 					// Among other defensible normalizations that would certainly occur during a copy.
 					tha.append_executable(fnb, &hash);
