@@ -95,10 +95,11 @@ A "gar heap" consists of the following two (or three) directory trees:
 Every time you some file and dirs to Gar, the files get copied into blobcas first,
 and then dirs get made in the treecas, and then all their contents get filed in with hardlinks to the blobcas.
 
-Flags to `gar add` can different modes for how to get the data into the gar heap:
-it can be done by copying the originals, or by hardlinking directly to the original files even in the blobcas.
-(Be cautious if using the hardlink-originals mode: hardlinks are not copy-on-write, but truly a link to the same file,
-so writing to the original files after using Gar in this mode this will corrupt your gar heap!)
+`gar add` *copies* data into the heap: once it returns, the heap shares no inodes with the files you gave it,
+and the originals remain yours to edit, free of strings.
+(A hardlink-the-originals mode exists in the library, for callers that can promise the originals will never be written again --
+hardlinks are not copy-on-write, but truly a link to the same file,
+so a write to an original in that mode would corrupt the gar heap.  The CLI deliberately does not expose it.)
 
 Gar heaps are trustless structures.  They can be validated entirely from their contents.
 For each file in the blobcas, its hash can be computed freshly from its contents.

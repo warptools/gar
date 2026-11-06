@@ -270,6 +270,28 @@ fn add_links_tree_entries_to_sharded_blobs() {
 	);
 }
 
+/// Copying is the default: the heap must never share an inode with the user's originals,
+/// so later edits to those originals can't reach into it.
+#[test]
+fn add_does_not_share_inodes_with_the_originals() {
+	use std::os::unix::fs::MetadataExt;
+
+	let td = scratch("add-copies");
+	gar(td.path(), &["init"]);
+	std::fs::create_dir(td.path().join("stuff")).expect("mkdir stuff");
+	std::fs::write(td.path().join("stuff/a_file"), b"a file\n").expect("write a file");
+
+	let r = gar(td.path(), &["add", "stuff"]);
+	assert_eq!(r.code, 0, "stderr: {}", r.stderr);
+	let stored = treecas_entry(td.path(), r.stdout.trim()).join("a_file");
+	let ino = |p: &Path| std::fs::metadata(p).expect("stat").ino();
+	assert_ne!(
+		ino(&stored),
+		ino(&td.path().join("stuff/a_file")),
+		"the stored file must not share an inode with the original"
+	);
+}
+
 /// Adding a tree the heap already holds makes the final rename fail, because the entry is there.
 /// That's another add having gotten there first, which in a CAS is success.
 #[test]
