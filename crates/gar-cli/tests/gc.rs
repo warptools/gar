@@ -210,16 +210,20 @@ fn staging_dirs_survive() {
 	let td = scratch("gc-staging");
 	gar(td.path(), &["init"]);
 	add_tree(td.path(), "stuff", &[("a.txt", "aaa\n")]);
-	// A wiptree mid-add: user-shaped content at arbitrary depth under a dot-named dir.
+	// A wiptree mid-add holds arbitrary user content.  The planted content here is shaped
+	// exactly like shard dirs holding an undemanded CAS entry: the dot prefix alone
+	// is what must make gc blind to it, no matter how sweepable its insides look.
 	let wiptree = td.path().join(".gar/treecas/.wiptree-planted");
-	std::fs::create_dir_all(wiptree.join("src")).expect("can plant a wiptree");
-	std::fs::write(wiptree.join("src/main.rs"), "fn main() {}\n").expect("can plant a file");
+	// Two levels under the dot dir, so the hash-named dir sits at the sweep's shard depth.
+	let shardlike = wiptree.join(format!("bb/{}", "a".repeat(64)));
+	std::fs::create_dir_all(&shardlike).expect("can plant a wiptree");
+	std::fs::write(shardlike.join("f.txt"), "planted\n").expect("can plant a file");
 	let demands = write_demands(td.path(), "keep.txt", &[]);
 
 	let r = gar(td.path(), &["gc", "--demands", &demands]);
 	assert_eq!(r.code, 0, "stderr: {}", r.stderr);
 	assert!(
-		wiptree.join("src/main.rs").is_file(),
+		shardlike.join("f.txt").is_file(),
 		"the planted wiptree must be untouched"
 	);
 }
