@@ -111,6 +111,37 @@ Duplicate hashes are allowed and mean nothing extra.
 An empty file (or one that's all comments) is legal: it demands nothing.
 
 
+### the tar transport stream
+
+`gar export` writes a treecas entry as a tar stream; `gar import` reads one back into a heap.
+
+What export writes is normative, and deterministic down to the byte:
+
+- Entries appear in the git-wise walk order (the same order tree hashing visits them:
+  byte order of names, directories compared as if suffixed with `/`).
+- Headers are in the GNU tar format.  Paths too long for the header field use GNU longname entries;
+  pax extensions are never written.
+- Paths are bare relative names: no leading `/`, no `./` prefix, no `..`.
+  The tree's root directory is the stream itself and gets no entry; directory names end with `/`.
+- Every header field that could vary is pinned: mtime 0, uid/gid 0, empty uname/gname.
+- Modes are exactly the heap's guarantees: `0444` for files, `0555` for executable files,
+  `0755` for directories, and `0777` for symlinks (whose mode bits mean nothing; that's the tar convention).
+- Empty directories appear as directory entries, like any other directory.
+- No compression.  Compose pipes for that.
+
+What import accepts is normative too, and fail-closed:
+
+- Entry types: files, directories, and symlinks.  Anything else (hardlink entries, devices,
+  fifos, pax specials) is refused, by entry name, storing nothing.
+- Paths must stay inside the import: absolute paths and paths with `..` components are refused.
+  `./` spellings are tolerated (common in foreign tars) but never required.
+- Modes are normalized on landing, exactly as `gar add` would:
+  only the user-exec bit of a file entry is read; everything else is discarded.
+  Likewise uid/gid/mtime: not part of a tree, not stored (see the metadata sections above).
+- The treehash import prints is computed from the stored bytes.
+  A sender's claims are checked by arithmetic, never believed.
+
+
 ### garidx files
 
 (This section is a draft.  Garidx files are not yet implemented.)
