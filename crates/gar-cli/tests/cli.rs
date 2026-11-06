@@ -231,48 +231,43 @@ fn add_refuses_to_commit_onto_a_treecas_entry_that_is_a_file() {
 /// The heap layout is an external contract: other tools read heaps directly.
 /// So the paths here are spelled out literally rather than built by any helper,
 /// which would change right along with the thing under test.
+///
+/// The two files share content, so both blobs exist either way;
+/// inode identity is what shows each tree entry links to the blob whose `-x` suffix matches its mode.
 #[test]
-fn add_places_entries_at_sharded_paths() {
+fn add_links_tree_entries_to_sharded_blobs() {
+	use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
 	let td = scratch("add-layout");
 	gar(td.path(), &["init"]);
 	let stuff = td.path().join("stuff");
 	std::fs::create_dir(&stuff).expect("mkdir stuff");
 	std::fs::write(stuff.join("a_file"), b"a file\n").expect("write a file");
 	std::fs::write(stuff.join("a_script"), b"a file\n").expect("write a script");
-	std::fs::set_permissions(
-		stuff.join("a_script"),
-		std::os::unix::fs::PermissionsExt::from_mode(0o755),
-	)
-	.expect("chmod the script");
+	std::fs::set_permissions(stuff.join("a_script"), PermissionsExt::from_mode(0o755))
+		.expect("chmod the script");
 
 	let r = gar(td.path(), &["add", "stuff"]);
 	assert_eq!(r.code, 0, "stderr: {}", r.stderr);
+	let hash = "2128f977414c236e7a4367508fbc095549e50ae05f26983540e86b0abd7d1e58";
+	assert_eq!(r.stdout.trim(), hash);
+	let tree = format!(".gar/treecas/21/28/{hash}");
+	let blob =
+		".gar/blobcas/29/09/2909489adcb095aa795a9a7e6d92db735d0a0ced0782c43496675bdb7beec3ce";
+	let ino = |p: &str| match std::fs::metadata(td.path().join(p)) {
+		Ok(m) => m.ino(),
+		Err(e) => panic!("stat {p}: {e}"),
+	};
 	assert_eq!(
-		r.stdout.trim(),
-		"2128f977414c236e7a4367508fbc095549e50ae05f26983540e86b0abd7d1e58"
+		ino(&format!("{tree}/a_file")),
+		ino(blob),
+		"a_file should link the plain blob"
 	);
-	for (path, want_dir) in [
-		(
-			".gar/blobcas/29/09/2909489adcb095aa795a9a7e6d92db735d0a0ced0782c43496675bdb7beec3ce",
-			false,
-		),
-		(
-			".gar/blobcas/29/09/2909489adcb095aa795a9a7e6d92db735d0a0ced0782c43496675bdb7beec3ce-x",
-			false,
-		),
-		(
-			".gar/treecas/21/28/2128f977414c236e7a4367508fbc095549e50ae05f26983540e86b0abd7d1e58",
-			true,
-		),
-	] {
-		let p = td.path().join(path);
-		let is = if want_dir { p.is_dir() } else { p.is_file() };
-		assert!(
-			is,
-			"expected a {} at {path}",
-			if want_dir { "dir" } else { "file" }
-		);
-	}
+	assert_eq!(
+		ino(&format!("{tree}/a_script")),
+		ino(&format!("{blob}-x")),
+		"a_script should link the -x blob"
+	);
 }
 
 /// Adding a tree the heap already holds makes the final rename fail, because the entry is there.
