@@ -40,6 +40,10 @@ pub enum Subcommands {
 
 	/// read a tar stream from stdin into Gar storage, and print the treehash it stored as.
 	Import(ImportCmd),
+
+	/// verify the whole heap from its bytes, restore its hardlink structure,
+	/// and move anything provably corrupt into quarantine.
+	Repair(RepairCmd),
 }
 
 #[derive(clap::Args, Debug)]
@@ -82,6 +86,11 @@ pub struct ExportCmd {
 	#[arg(value_parser = parse_treehash)]
 	pub hash: gittree::Hash,
 }
+
+/// No arguments: repair always covers the whole heap, and always does the full
+/// verification -- the no-flags invocation is the most-correct one.
+#[derive(clap::Args, Debug)]
+pub struct RepairCmd {}
 
 #[derive(clap::Args, Debug)]
 pub struct ImportCmd {
