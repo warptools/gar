@@ -47,59 +47,29 @@ pub fn add(
 	let hash = w.add_recurse(Path::new(""), &fs::metadata(w.scan_root)?)?;
 
 	// The final commit: move the whole wiptree into CAS place.
+	// Shard dirs are created only after a `NotFound` says they're missing, same as blob placement.
+	//
+	// A failed rename is tolerated if a directory holds the destination: in a CAS, losing
+	// the rename race to another add manifesting the same tree is success.  The check is on the
+	// destination afterward, not the error kind, because the kinds don't carve this cleanly:
+	// POSIX allows either `EEXIST` or `ENOTEMPTY` for a nonempty directory target, and a rename
+	// onto an existing *empty* directory (the empty tree) succeeds outright.  "Is a directory
+	// there now?" is the actual question.  A non-directory squatting at the name is not that
+	// tree -- returning success would hand back a hash for a heap that lacks it -- so that,
+	// and every other failure, stays an error.
 	let dest_path: PathBuf = repo.tree_path(&hash);
-	repo.create_tree_shard(&hash)?;
-	let treecas_result = fs::rename(&td, &dest_path);
-
-	// The error handling for this last step, however, is... wild.
-	//
-	// Goal: if the rename failed, because the target exists, that's *fine*;
-	// because we're a CAS system, that just means someone else raced us
-	// to manifesting that result already, and that's _fine_.
-	//
-	// Actual: uh, well.  Oof.
-	// As far as I can tell, telling when a directory rename fails because target exists
-	// is literally programmatically indistinguishable in the rust stdlib as of today on stable.
-	// So... what we're going to do is, for _any_ error, just check if the target path exists,
-	// and if it does, we'll discard the error (regardless of what it was).
-	//
-	// (r u serious??  Yeah, yeah I am.  fs::rename doesn't return an
-	// `io::ErrorKind::AlreadyExists`, which is what you might expect.
-	// Instead, it returns `io::ErrorKind::DirectoryNotEmpty`.  Which...
-	// is illegal to talk about, because it's behind the 'io_error_more' unstable feature
-	// (see <https://github.com/rust-lang/rust/issues/86442>).
-	// I don't see any alternative route to the data, except for maybe dumping the debug
-	// format into a buffer and matching on strings, which is heinous.
-	// I'm also not willing to start using an unstable compiler for just this.
-	// So.
-	//
-	// Fortunately, checking if the target directory already exists *after* our move attempt
-	// is fine: although it _smells_ like a TOCTOU, we're in a situation where it's fine.
-	// We don't care about the ability to distinguish if this process succeeded; so long as
-	// *someone* succeeded in making that data manifest, we're happy.  And because a CAS
-	// system is append-only (outside of GC), there's no relevant race conditions in sight.
-	//
-	// The other way to attack this might be to switch to the 'rustix' crate
-	// and attempt to leave rust's stdlib fs API behind entirely.  Tempting.
-	// But a bridge too far for me today.
-	match treecas_result {
-		Ok(_) => {}, // cool
-		Err(e) => {
-			// Neither of these two conditions is valid:
-			//   - `e.kind() == io::ErrorKind::AlreadyExists`
-			//      --> is what I expected, but is not actually what the fs package produces.
-			//   - `e.kind() == io::ErrorKind::DirectoryNotEmpty`
-			//      --> is what we really see, except its hidden behind `#![feature(io_error_more)]`.
-			//
-			// Tolerate the failed rename only if a *directory* is already there -- someone else
-			// manifested the same tree, which is fine in a CAS.  A plain file squatting at the
-			// destination is not that tree, so returning success would hand back a hash for a
-			// heap that lacks it.
-			if !dest_path.is_dir() {
-				return Err(e);
-			}
-		},
-	};
+	let mut treecas_result = fs::rename(&td, &dest_path);
+	if let Err(e) = &treecas_result {
+		if e.kind() == io::ErrorKind::NotFound {
+			repo.create_tree_shard(&hash)?;
+			treecas_result = fs::rename(&td, &dest_path);
+		}
+	}
+	if let Err(e) = treecas_result {
+		if !dest_path.is_dir() {
+			return Err(e);
+		}
+	}
 
 	Ok(hash)
 }
