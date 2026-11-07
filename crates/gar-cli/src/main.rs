@@ -7,6 +7,7 @@ use gar::demands;
 use gar::export;
 use gar::gc;
 use gar::import;
+use gar::index_backfill;
 use gar::repair;
 use gar::repo;
 
@@ -248,6 +249,56 @@ fn main() {
 				},
 				Err(e) => {
 					eprintln!("repair: {e}");
+					process::exit(exitcodes::IO_ERROR);
+				},
+			}
+		},
+		cmds::Subcommands::Index(args) => {
+			require_repo(&repo, &root_args.repo);
+			// Restores any subdirectory that's gone missing since the repo was made, same as add:
+			// that includes a treeidx dir that a heap from before indexes never had.
+			if let Err(e) = repo.create() {
+				eprintln!("{e}");
+				process::exit(exitcodes::IO_ERROR);
+			}
+			let result = if args.all {
+				index_backfill::index_all(&repo)
+			} else {
+				index_backfill::index_named(&repo, &args.hashes)
+			};
+			// Nothing goes on stdout: an index's path follows from its hash, so there's no result to hand a script,
+			// and the exit code says whether every tree asked about now has one.
+			match result {
+				Ok(report) => {
+					eprintln!(
+						"index: indexed {} trees; {} already indexed; {} corrupt; {} not in this heap",
+						report.indexed,
+						report.already_indexed,
+						report.corrupt.len(),
+						report.not_in_stock.len()
+					);
+					for c in &report.corrupt {
+						eprintln!(
+							"index: tree {} is corrupt: its content hashes to {}, so no index was written for it (`gar repair` will move it into quarantine)",
+							c.name.as_hex(),
+							c.computed.as_hex()
+						);
+					}
+					for hash in &report.not_in_stock {
+						eprintln!("index: tree {} is not in this heap", hash.as_hex());
+					}
+					// When both happen, corruption decides the exit code:
+					// it's damage in the heap that needs acting on, where an absent tree is only a request that missed.
+					if !report.corrupt.is_empty() {
+						process::exit(exitcodes::CORRUPTION_FOUND);
+					}
+					if !report.not_in_stock.is_empty() {
+						process::exit(exitcodes::NOT_IN_STOCK);
+					}
+					process::exit(exitcodes::SUCCESS);
+				},
+				Err(e) => {
+					eprintln!("index: {e}");
 					process::exit(exitcodes::IO_ERROR);
 				},
 			}

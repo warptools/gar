@@ -10,11 +10,11 @@
 //! | 3    | `NO_REPO`     | no gar repo where one was needed                          |
 //! | 4    | `REPO_EXISTS` | `init` found a repo already present                       |
 //! | 5    | `IO_ERROR`    | something went wrong on the filesystem                    |
-//! | 6    | `NOT_IN_STOCK`| `path` asked about a tree the heap doesn't hold           |
+//! | 6    | `NOT_IN_STOCK`| `path`, `export`, or `index` named a tree the heap doesn't hold (`index` still processed the rest) |
 //! | 7    | `DEMAND_NOT_IN_STOCK` | `gc` was told to keep a tree the heap doesn't hold (the rest of the gc still ran) |
 //! | 8    | `HASH_MISMATCH` | `import --expect` stored the stream, but it hashed to something else (the stored tree stays) |
 //! | 9    | `BAD_TAR`     | `import` refused the tar stream: an unsupported entry type, or a path that is absolute or `..`-escaping |
-//! | 10   | `CORRUPTION_FOUND` | `repair` found corruption; the offenders were moved into quarantine |
+//! | 10   | `CORRUPTION_FOUND` | `repair` found corruption, and moved the offenders into quarantine; or `index` found trees that don't hash to their names, and wrote no index for them |
 //!
 //! An escape attempted by writing through a symlink is refused too, but by the tar unpacker
 //! underneath rather than by gar's own path checks, so it surfaces as 5.
