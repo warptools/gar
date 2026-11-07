@@ -119,6 +119,7 @@ For each file in the blobcas, its hash can be computed freshly from its contents
 Gar heaps are append-only in normal operation; `gar gc` is how disk space comes back.
 
 `gar gc --demands <file>` removes every tree not named by a demands file,
+and every treeidx file not named by one,
 and then every blob no kept tree still links to.
 A demands file names the treehashes to keep, one per line
 (the exact format is specified in [./README_formats.md](./README_formats.md)).

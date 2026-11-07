@@ -1,6 +1,7 @@
 //! Garbage collection: reclaims disk space from a heap, keeping only demanded trees.
 //!
 //! Mark, then sweep: walk every demanded treecas entry collecting the inodes of its files,
+//! remove every index file that wasn't demanded,
 //! remove every treecas entry that wasn't demanded,
 //! then unlink every blobcas file whose inode wasn't collected.
 //!
@@ -24,13 +25,14 @@ use crate::repo;
 pub struct Report {
 	pub trees_kept: usize,
 	pub trees_removed: usize,
+	pub indexes_removed: usize,
 	pub blobs_removed: usize,
 	/// Demanded treehashes the heap turned out not to hold, in hex order.
 	/// The gc still completes for everything else; the caller decides how loudly to fail.
 	pub absent_demands: Vec<gittree::Hash>,
 }
 
-/// Removes every treecas entry not in `demands`, then every blobcas file no kept tree links to.
+/// Removes every index file and treecas entry not in `demands`, then every blobcas file no kept tree links to.
 ///
 /// Inodes are compared by ino alone, not dev+ino: everything in one heap
 /// is on one filesystem by construction (the hardlinks require it).
@@ -47,6 +49,10 @@ pub fn gc(repo: &repo::Repo, demands: &HashSet<gittree::Hash>) -> io::Result<Rep
 		}
 	}
 	absent_demands.sort_by_key(gittree::Hash::as_hex);
+
+	// Indexes are swept before the trees they describe, so a gc interrupted between sweeps
+	// leaves at worst some doomed trees without their index, never an index advertising a removed tree.
+	let indexes_removed = sweep_indexes(repo, demands)?;
 
 	// Sweep the treecas.
 	// Removal only applies to what gc recognizes as a tree entry:
@@ -89,9 +95,47 @@ pub fn gc(repo: &repo::Repo, demands: &HashSet<gittree::Hash>) -> io::Result<Rep
 	Ok(Report {
 		trees_kept,
 		trees_removed,
+		indexes_removed,
 		blobs_removed,
 		absent_demands,
 	})
+}
+
+/// Removes every index file whose hash isn't in `demands`, returning how many went.
+///
+/// An index is kept iff demanded, whether or not its tree is in stock:
+/// a demanded-but-absent tree is a failure for the caller to report, not a reason to discard its index.
+/// Removal only applies to what gc recognizes as an index file:
+/// a regular file with a canonical hash name, at shard depth.
+/// Anything else in there isn't gc's to judge, and is left in place.
+///
+/// A heap without a treeidx dir (one from before index files) has nothing to sweep here.
+fn sweep_indexes(repo: &repo::Repo, demands: &HashSet<gittree::Hash>) -> io::Result<usize> {
+	if let Err(e) = fs::symlink_metadata(repo.treeidx_path()) {
+		return if e.kind() == io::ErrorKind::NotFound {
+			Ok(0)
+		} else {
+			Err(e)
+		};
+	}
+	let mut removed = 0;
+	for_each_shard_entry(repo.treeidx_path(), &mut |ent| {
+		if !ent.file_type()?.is_file() {
+			return Ok(());
+		}
+		let name = ent.file_name();
+		let Some(hash) = name.to_str().and_then(gittree::Hash::from_hex_strict) else {
+			return Ok(());
+		};
+		if demands.contains(&hash) {
+			return Ok(());
+		}
+		// A single unlink is atomic, so unlike a tree, there's no half-removed state to guard against.
+		fs::remove_file(ent.path())?;
+		removed += 1;
+		Ok(())
+	})?;
+	Ok(removed)
 }
 
 /// Removes one treecas entry: renamed to a dot-prefixed temp in its shard dir first,

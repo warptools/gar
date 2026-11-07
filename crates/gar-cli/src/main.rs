@@ -124,6 +124,8 @@ fn main() {
 		},
 		cmds::Subcommands::Gc(args) => {
 			require_repo(&repo, &root_args.repo);
+			// No `repo.create()` here, unlike add: a recreated empty treecas would read as
+			// "no tree references any blob", and the sweep would empty the blobcas.
 			// Every demands file is read and parsed in full before anything is deleted:
 			// a gc driven by a half-understood demands list must not get to touch the heap.
 			let mut demanded = std::collections::HashSet::new();
@@ -146,8 +148,11 @@ fn main() {
 			match gc::gc(&repo, &demanded) {
 				Ok(report) => {
 					eprintln!(
-						"gc: kept {} trees; removed {} trees and {} blobs",
-						report.trees_kept, report.trees_removed, report.blobs_removed
+						"gc: kept {} trees; removed {} trees, {} indexes, and {} blobs",
+						report.trees_kept,
+						report.trees_removed,
+						report.indexes_removed,
+						report.blobs_removed
 					);
 					if !report.absent_demands.is_empty() {
 						for hash in &report.absent_demands {
