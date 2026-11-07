@@ -69,6 +69,13 @@ impl Repo {
 		&self.treeidx_path
 	}
 
+	/// Where quarantined entries go: repair moves provably corrupt CAS entries here,
+	/// into a per-run subdirectory, rather than ever deleting them.
+	/// Not part of `create`: a healthy heap never has one.
+	pub fn quarantine_path(&self) -> PathBuf {
+		self.path.join("quarantine")
+	}
+
 	/// Where a blob lives in the blobcas.  Executable blobs are stored separately, with a `-x` suffix.
 	pub fn blob_path(&self, hash: &gittree::Hash, executable: bool) -> PathBuf {
 		let mut name = hash.as_hex();
