@@ -1,5 +1,6 @@
 use std::fs;
 use std::io;
+use std::io::Seek as _;
 use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -21,6 +22,11 @@ pub fn add(
 	// but in either case, we had to do all the read IO, and there's simply no way to avoid _that_.)
 	let td = tempdir::TempDir::new_in(repo.treecas_path(), ".wiptree-")?;
 
+	// Copy mode stages each file here before publishing it into the blobcas.
+	// It sits inside the repo dir so the publishing hardlink never crosses a filesystem.
+	// Cleaned up on drop, same as the wiptree.
+	let staging = tempdir::TempDir::new_in(repo.repo_path(), ".staging-")?;
+
 	// TODO: have not handled the case where a single file is given as target.  That doesn't really produce a treecas, by most definitions.
 	// I'm not exactly sure what the correct UX is for that.
 	// Gar may just end up forbidding this because I don't know what else it should do.
@@ -30,6 +36,7 @@ pub fn add(
 		repo_ino: fs::metadata(repo.repo_path())?.ino(),
 		scan_root: path.as_ref(),
 		wiptree_root: td.path(),
+		staging_root: staging.path(),
 		faithmode,
 	};
 
@@ -97,6 +104,7 @@ pub fn add(
 	Ok(hash)
 }
 
+#[derive(Clone, Copy, Debug)]
 pub enum FaithMode {
 	/// Copy files into the blobstore while adding to gar.
 	///
@@ -136,8 +144,14 @@ struct AddWork<'a> {
 	repo_ino: u64,
 	scan_root: &'a Path,
 	wiptree_root: &'a Path,
+	staging_root: &'a Path,
 	faithmode: FaithMode,
 }
+
+/// Modes blobs carry in the blobcas: read-only, with the exec bit matching the `-x` name split.
+/// These are a format guarantee; README_formats.md (the blobcas section) is the SSOT for it.
+const BLOB_MODE: u32 = 0o444;
+const BLOB_MODE_EXEC: u32 = 0o555;
 
 impl AddWork<'_> {
 	/// Walk the filesystem.  Depth first.
@@ -158,6 +172,70 @@ impl AddWork<'_> {
 		}
 	}
 
+	/// Makes `blobcas_path` a hardlink to `source` -- or accepts whatever is already there.
+	///
+	/// A CAS name is never replaced once it exists: replacing it would split the inode family
+	/// shared with existing treecas links, and a racing add can see the swap as a `NotFound`
+	/// in the middle of its own linking.  `link` never clobbers, so an `AlreadyExists` from it
+	/// means the blob is already stored, and that's dedup doing its job: success.
+	///
+	/// Placement is optimistic: shard directories are created only after a `NotFound` says they're missing.
+	/// That trades one failed `link` on each shard's first blob for skipping two `mkdir` calls on every other.
+	fn place_blob(
+		&self,
+		source: &Path,
+		blobcas_path: &Path,
+		hash: &gittree::Hash,
+	) -> io::Result<()> {
+		match fs::hard_link(source, blobcas_path) {
+			Err(e) if e.kind() == io::ErrorKind::NotFound => {
+				self.repo.create_blob_shard(hash)?;
+				match fs::hard_link(source, blobcas_path) {
+					Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+					r => r,
+				}
+			},
+			Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+			r => r,
+		}
+	}
+
+	/// Copy-mode blob intake: copies the open source into a private staging file,
+	/// normalizes its permissions, hashes the copy, and publishes it into the blobcas.
+	///
+	/// Copy first, hash the copy afterward -- don't tee a hash out of the copy, and don't hash the source:
+	/// the plain copy takes kernel fast paths that make it plus a re-read cheaper than streaming
+	/// through userland (see `experiments/benches/direct_copy.rs` for evidence),
+	/// and hashing the bytes we actually publish means a source file mutated mid-add
+	/// still can't put content under a CAS name that doesn't describe it.
+	fn copy_blob_in(&self, source: &mut fs::File, executable: bool) -> io::Result<gittree::Hash> {
+		let staging_path = self.staging_root.join("staged");
+		let mut staged = fs::OpenOptions::new()
+			.read(true)
+			.write(true)
+			.create_new(true)
+			.open(&staging_path)?;
+		io::copy(source, &mut staged)?;
+		// This is an fchmod, so the published mode is exact, umask notwithstanding.
+		// It must happen before the publishing link below: a blobcas inode is never touched again.
+		let mode = if executable {
+			BLOB_MODE_EXEC
+		} else {
+			BLOB_MODE
+		};
+		staged.set_permissions(fs::Permissions::from_mode(mode))?;
+		let size = staged.metadata()?.size();
+		staged.seek(io::SeekFrom::Start(0))?;
+		let hash = gittree::hash_of_stream(&mut staged, size)?;
+		self.place_blob(
+			&staging_path,
+			&self.repo.blob_path(&hash, executable),
+			&hash,
+		)?;
+		fs::remove_file(&staging_path)?;
+		Ok(hash)
+	}
+
 	/// Returns the blob hash, and whether the file was stored as executable (which the tree entry mode must match).
 	fn add_recurse_file(&self, path: &Path) -> io::Result<(gittree::Hash, bool)> {
 		// Files:
@@ -176,95 +254,42 @@ impl AddWork<'_> {
 		//   - or *maybe* we'll respond to non-normal permissions by normalizing them, if requested
 		//   - and then (orthagonal, except it might skip some of the other choices) there's the *maybe* fallback to copy if hardlink would be a cross-device link.
 
-		// Blobhash each file.  Gotta know where to put it.
-		// TODO: if we have to copy, would rather hold off on this so we don't read twice.
-		// // ^ ok this turns out untrue; attempts to tee in memory have been poor because smarter kernel calls that just do "copy" are faster.
-		// //     so instead what we should really think about here is what's safest in the face of concurrent activity (as much as possible, and from the pov of the cas).
-		//
-		// Size, exec bit, and content all come from this one open fd,
-		// so they describe the same inode even if the path is chmod'ed or renamed over mid-walk.
+		// Open the source exactly once: the exec bit (and, in link mode, size and content)
+		// comes from this one fd, so it describes the same inode
+		// even if the path is chmod'ed or renamed over mid-walk.
 		let mut file = fs::File::open(self.scan_root.join(path))?;
 		let file_meta = file.metadata()?;
 		let executable = gittree::mode_is_executable(file_meta.permissions().mode());
-		let hash = gittree::hash_of_stream(&mut file, file_meta.size())?;
 
-		// First: Populate the blobcas, either by copy or by hardlink.
+		// First: populate the blobcas; how, depends on the faith mode.
 		// There is one piece of data we have to represent in the blob name beyond the hash itself:
 		// because git stores the executable bit in the tree, rather than the blob header itself,
 		// we have to store the executable bit as a suffix of the blobhash.
 		// (We can't just add executable bit back onto things in the treecas, because that's...
 		// not how hardlinks work, unfortunately.  Oh how I wish it was!  But, nope.)
-		let blobcas_path = self.repo.blob_path(&hash, executable);
-		self.repo.create_blob_shard(&hash)?;
-		// BRANCH: are we in paranoia mode, or are we hardlinking orignals and trusting in a lack of mutation?
-		let blobcas_result: io::Result<_> = match self.faithmode {
-			FaithMode::Copy => {
-				// Unimplemented.  Notes toward it, because this design thinking is easy to lose:
-				//
-				// Do: Copy first, and read a second time to hash.
-				// Don't: try to tee the hash out of the copy.
-				// (This might not be intuitive, because it seems like its doing reads twice, but:
-				// Copying can take kernel fastpaths -- and both `fs::copy` and `io::copy` do! --
-				// and when those engage, a subsequent "re"-read is much cheaper
-				// than a read-and-write loop that streams through userland.
-				// See `benches/direct_copy.rs` and its adjacent notes for evidence.)
-				// Also don't: hash, and then copy.  Or at least put that behind a flag that carries cautionary documentation.
-				// (While that would sometimes possibly be a bit faster,
-				// no amount of speed savings are worth the downsides of the CAS geting corrupted
-				// if there's a concurrent modification of a file.
-				// There are cases where we can still use this -- container engines, for example --
-				// but those situations are almost definitionally automated and can handle having a flag.)
-				//
-				// So: copy to a temp name in the blobcas first; then hash; then rename into place.
-				//
-				// Now, about atomicity.  There's another squick coming up here.
-				// Usually, in a content-addressed storage system done on a posix filesystem,
-				// you just do a rename into place unconditionally, and that's that, and it's atomic: yay, easy, and correct.
-				// Here where we're trying to use hardlinks to keep things deduplicating between the blobcas and the treecas?
-				// More complicated.
-				//
-				// When we're about to move a file to its CAS name, we have to check if that name already exists.
-				// Is this ia TOCTOU vs simply doing the atomic rename?
-				// On the surface, yeah, sorta; but, bear with me.
-				// While a rename *is* atomic, but it leaves the target path with *the inode of the source*.
-				// In our context, that means *any treecas hardlinks to the previous file would be in a different family
-				// than any other new treecas links generated from this file*.
-				// (And if you apply that logic over time, it means... yeah, every treecas would get linked to a new blobcas file
-				// every time there's one to share... so... no one would ever... ahem... share.)
-				// So check for an existing entry first, and discard the temp file rather than renaming if one is there.
-				// In the end, we still do a rename, *so there's no correctness risk* from the TOCTOU race;
-				// the only downside of of a race is ~one duplicated blob (a treecas file that becomes separated when the blobcas is overwritten).
-				// (Something that could also be recovered later in some kind of housekeeping operation, even.)
-				//
-				// On the code for making the temp file: the `tempfile` crate was considered and set aside.
-				// It carries a lot of os-conditional code for a job we don't need done especially well;
-				// it creates files 0o600 when we want the repo's normalized permissions;
-				// and its `O_TMPFILE` path is only available on some filesystems anyway.
-				// A probing loop is needed for the hardlink path regardless, so we're just going to own this.
-				todo!("copy mode")
-			},
+		let hash = match self.faithmode {
+			FaithMode::Copy => self.copy_blob_in(&mut file, executable)?,
 
 			// In LinkOriginals mode, hardlinks are made into the blobcas straight to the original file.
-			// `fs::hard_link` fails with `AlreadyExists` rather than replacing an existing target,
-			// which is exactly the non-clobbering behavior wanted here (see the inode note in the Copy arm).
 			// However, this is dangerous if the original file is ever modified again: hardlinks effectively transmit mutations.
-			FaithMode::LinkOriginals => fs::hard_link(self.scan_root.join(path), &blobcas_path),
-			FaithMode::Move => todo!(),
-			// REVIEW: what do if permissions aren't normal?  Copy instead?  Add a mode for halt-if-not-ezlinkable?
-		};
-		match blobcas_result {
-			Ok(_) => {}, // cool
-			Err(e) => {
-				if e.kind() == io::ErrorKind::AlreadyExists {
-					// cool
-				} else {
-					return Err(e);
-				}
+			FaithMode::LinkOriginals => {
+				let hash = gittree::hash_of_stream(&mut file, file_meta.size())?;
+				self.place_blob(
+					&self.scan_root.join(path),
+					&self.repo.blob_path(&hash, executable),
+					&hash,
+				)?;
+				hash
 			},
+			FaithMode::Move => todo!(),
+			// REVIEW: what do if permissions aren't normal in LinkOriginals mode?  Copy instead?  Add a mode for halt-if-not-ezlinkable?
 		};
 
 		// Second: hardlink a new entry in the treecas to the blobcas.
-		fs::hard_link(&blobcas_path, self.wiptree_root.join(path))?;
+		fs::hard_link(
+			self.repo.blob_path(&hash, executable),
+			self.wiptree_root.join(path),
+		)?;
 
 		// And return the hash so dir treehashing can accumulate.
 		Ok((hash, executable))

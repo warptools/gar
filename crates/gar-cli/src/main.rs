@@ -98,9 +98,9 @@ fn main() {
 				eprintln!("{e}");
 				process::exit(exitcodes::IO_ERROR);
 			}
-			// TODO: the default should become `Copy`, once that mode is implemented.
-			//  See the large comment block in add.rs about this.
-			match add::add(&repo, args.path, add::FaithMode::LinkOriginals) {
+			// Copy is the only mode the CLI offers: it's the one that's safe without
+			// promises about what happens to the originals afterward.
+			match add::add(&repo, args.path, add::FaithMode::Copy) {
 				Ok(hash) => {
 					println!("{}", hash.as_hex());
 					process::exit(exitcodes::SUCCESS);

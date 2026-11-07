@@ -58,6 +58,16 @@ As a special further rule, files with the executable bit set are given an "-x" s
 This is because hardlinks do not permit storing different metadata attached to paths that hardlink to the same data;
 so, we have to store content separately when it has distinct metadata.
 
+Blobs are stored read-only: mode `0444`, or `0555` for the executable ("-x") blobs.
+This is a format guarantee: a blobcas inode is never written to (nor re-moded) after it is published,
+and the read-only modes protect it from accidental mutation through any of its hardlinks --
+including the ones in the treecas.
+(Git's object files and the nix store make the same choice.)
+Removing a blob is still governed by the permissions of the directory holding it, so this costs nothing at cleanup time.
+
+(One caveat: heaps populated via the library's link-originals mode share inodes with the user's original files,
+mode bits included, so the read-only guarantee holds only for heaps populated by copying -- which is what the CLI does.)
+
 
 ### the treecas directory
 
