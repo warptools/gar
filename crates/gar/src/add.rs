@@ -6,12 +6,26 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use crate::repo;
+use crate::treeidx;
 use gittree;
 
+/// Stores the tree at `path` in the heap, and returns its treehash.
+///
+/// The tree's index is written too; `add_with` can switch that off.
 pub fn add(
 	repo: &repo::Repo,
 	path: impl AsRef<Path>,
 	faithmode: FaithMode,
+) -> Result<gittree::Hash, io::Error> {
+	add_with(repo, path, faithmode, Indexing::Write)
+}
+
+/// `add`, with the choice of whether to write the tree's index.
+pub fn add_with(
+	repo: &repo::Repo,
+	path: impl AsRef<Path>,
+	faithmode: FaithMode,
+	indexing: Indexing,
 ) -> Result<gittree::Hash, io::Error> {
 	// Make the tempdir in the treecas root: we'll fill into this,
 	// then move the tempdir into it's CAS-named place at the very end.
@@ -31,13 +45,19 @@ pub fn add(
 	// I'm not exactly sure what the correct UX is for that.
 	// Gar may just end up forbidding this because I don't know what else it should do.
 
-	let w = AddWork {
+	let mut w = AddWork {
 		repo,
 		repo_ino: fs::metadata(repo.repo_path())?.ino(),
 		scan_root: path.as_ref(),
 		wiptree_root: td.path(),
 		staging_root: staging.path(),
 		faithmode,
+		index: match indexing {
+			Indexing::Write => Some(Vec::new()),
+			Indexing::Skip => None,
+		},
+		// Overwritten in every directory's slot before the walk returns.
+		placeholder: gittree::Hash::from_hex([b'0'; 64]).expect("64 zeros are valid hex"),
 	};
 
 	// Walk the filesystem.
@@ -45,6 +65,10 @@ pub fn add(
 	// even though we have one big commit at the end for the whole treecas,
 	// removing things from the blobcas as soon as this walk begins would require a GC.)
 	let hash = w.add_recurse(Path::new(""), &fs::metadata(w.scan_root)?)?;
+
+	// The index is checked before the commit, so a tree that can't be indexed is never stored.
+	// It's written only after the commit, so no index ever names a tree the heap lacks.
+	let index_bytes = w.index.take().map(serialize_index).transpose()?;
 
 	// The final commit: move the whole wiptree into CAS place.
 	// Shard dirs are created only after a `NotFound` says they're missing, same as blob placement.
@@ -71,7 +95,61 @@ pub fn add(
 		}
 	}
 
+	// The tree is in stock either way now, so the index goes in on both of those paths.
+	if let Some(bytes) = index_bytes {
+		write_index(repo, &hash, &bytes, staging.path())?;
+	}
+
 	Ok(hash)
+}
+
+/// Verifies and serializes the index entries add's walk recorded.
+///
+/// The walk and `verify` each compute every tree hash, so a refusal means they disagree (a bug),
+/// or that a path is too long for the format's length field.
+/// Either way the add fails rather than storing a tree without its index.
+fn serialize_index(entries: Vec<treeidx::Entry>) -> io::Result<Vec<u8>> {
+	match treeidx::verify(entries) {
+		Ok(idx) => Ok(treeidx::serialize(&idx)),
+		Err(refusal) => Err(io::Error::new(
+			io::ErrorKind::InvalidData,
+			format!("cannot index the tree being added: {refusal}"),
+		)),
+	}
+}
+
+/// Lands a tree's index: written into staging, then renamed into its shard dir,
+/// so the index path never holds a partial file.
+///
+/// Shard dirs are created only after a `NotFound` says they're missing, same as blob placement.
+/// Renaming over an existing index is fine: the format is deterministic, so it holds these same bytes.
+fn write_index(
+	repo: &repo::Repo,
+	hash: &gittree::Hash,
+	bytes: &[u8],
+	staging_root: &Path,
+) -> io::Result<()> {
+	let staged = staging_root.join("index");
+	fs::write(&staged, bytes)?;
+	let dest = repo.index_path(hash);
+	match fs::rename(&staged, &dest) {
+		Err(e) if e.kind() == io::ErrorKind::NotFound => {
+			repo.create_index_shard(hash)?;
+			fs::rename(&staged, &dest)
+		},
+		r => r,
+	}
+}
+
+/// Whether an add writes a treeidx file for the tree it stores.
+#[derive(Clone, Copy, Debug)]
+pub enum Indexing {
+	/// Write the index, built from the add's own walk (no content is hashed twice).
+	/// This is what `add` does.
+	Write,
+	/// Store the tree with no index.
+	/// One can still be generated from the stored tree later, at the cost of re-hashing it.
+	Skip,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -116,6 +194,9 @@ struct AddWork<'a> {
 	wiptree_root: &'a Path,
 	staging_root: &'a Path,
 	faithmode: FaithMode,
+	/// The tree's index entries so far, in preorder; `None` when not indexing.
+	index: Option<Vec<treeidx::Entry>>,
+	placeholder: gittree::Hash,
 }
 
 impl AddWork<'_> {
@@ -123,7 +204,7 @@ impl AddWork<'_> {
 	/// Hardlink (or move, or copy, depending on faithmode) stuff into the repo's blobcas,
 	/// and then hardlink *that* it into wiptree.
 	/// Return the treehash (or blobhash) at every step
-	fn add_recurse(&self, path: &Path, path_meta: &fs::Metadata) -> io::Result<gittree::Hash> {
+	fn add_recurse(&mut self, path: &Path, path_meta: &fs::Metadata) -> io::Result<gittree::Hash> {
 		// TODO: this whole function is somewhat silly.  It is only used at the root, and even there does not do anything special.  Remove it.
 		let path_ft = path_meta.file_type();
 		if path_ft.is_file() {
@@ -135,6 +216,18 @@ impl AddWork<'_> {
 		} else {
 			panic!("unknown file type")
 		}
+	}
+
+	/// Records an index entry for `path`, if this add is writing an index, and returns its position.
+	///
+	/// Every entry is recorded by the step that put it in the wiptree, so the index mirrors what landed.
+	fn record(&mut self, path: &Path, kind: treeidx::Kind) -> Option<usize> {
+		let index = self.index.as_mut()?;
+		index.push(treeidx::Entry {
+			path: path.as_os_str().as_encoded_bytes().to_vec(),
+			kind,
+		});
+		Some(index.len() - 1)
 	}
 
 	/// Makes `blobcas_path` a hardlink to `source` -- or accepts whatever is already there.
@@ -173,7 +266,14 @@ impl AddWork<'_> {
 	/// through userland (see `experiments/benches/direct_copy.rs` for evidence),
 	/// and hashing the bytes we actually publish means a source file mutated mid-add
 	/// still can't put content under a CAS name that doesn't describe it.
-	fn copy_blob_in(&self, source: &mut fs::File, executable: bool) -> io::Result<gittree::Hash> {
+	///
+	/// Returns the hash and size of the copy: those describe the blob that landed,
+	/// even if the source changed underfoot.
+	fn copy_blob_in(
+		&self,
+		source: &mut fs::File,
+		executable: bool,
+	) -> io::Result<(gittree::Hash, u64)> {
 		let staging_path = self.staging_root.join("staged");
 		let mut staged = fs::OpenOptions::new()
 			.read(true)
@@ -198,11 +298,11 @@ impl AddWork<'_> {
 			&hash,
 		)?;
 		fs::remove_file(&staging_path)?;
-		Ok(hash)
+		Ok((hash, size))
 	}
 
 	/// Returns the blob hash, and whether the file was stored as executable (which the tree entry mode must match).
-	fn add_recurse_file(&self, path: &Path) -> io::Result<(gittree::Hash, bool)> {
+	fn add_recurse_file(&mut self, path: &Path) -> io::Result<(gittree::Hash, bool)> {
 		// Files:
 		// - First get it in the blobcas.
 		// - Then hardlink it into the treecas.
@@ -232,7 +332,7 @@ impl AddWork<'_> {
 		// we have to store the executable bit as a suffix of the blobhash.
 		// (We can't just add executable bit back onto things in the treecas, because that's...
 		// not how hardlinks work, unfortunately.  Oh how I wish it was!  But, nope.)
-		let hash = match self.faithmode {
+		let (hash, size) = match self.faithmode {
 			FaithMode::Copy => self.copy_blob_in(&mut file, executable)?,
 
 			// In LinkOriginals mode, hardlinks are made into the blobcas straight to the original file.
@@ -244,7 +344,7 @@ impl AddWork<'_> {
 					&self.repo.blob_path(&hash, executable),
 					&hash,
 				)?;
-				hash
+				(hash, file_meta.size())
 			},
 			FaithMode::Move => todo!(),
 			// REVIEW: what do if permissions aren't normal in LinkOriginals mode?  Copy instead?  Add a mode for halt-if-not-ezlinkable?
@@ -255,12 +355,20 @@ impl AddWork<'_> {
 			self.repo.blob_path(&hash, executable),
 			self.wiptree_root.join(path),
 		)?;
+		self.record(
+			path,
+			treeidx::Kind::File {
+				executable,
+				size,
+				hash: hash.clone(),
+			},
+		);
 
 		// And return the hash so dir treehashing can accumulate.
 		Ok((hash, executable))
 	}
 
-	fn add_recurse_symlink(&self, path: &Path) -> io::Result<gittree::Hash> {
+	fn add_recurse_symlink(&mut self, path: &Path) -> io::Result<gittree::Hash> {
 		// There's no point in blobcas'ing these, but we still do need their git hash to construct tree IDs, so do so.
 		// TODO make `gittree::hash_of_symlink` return the body too so we can DRY this better
 		let target = fs::read_link(self.scan_root.join(path))?;
@@ -269,13 +377,28 @@ impl AddWork<'_> {
 		let hash = gittree::hash_of_stream(&mut foo, size)?;
 
 		// Make a new symlink in the treecas output dir.
-		std::os::unix::fs::symlink(target, self.wiptree_root.join(path))?;
+		std::os::unix::fs::symlink(&target, self.wiptree_root.join(path))?;
+		self.record(
+			path,
+			treeidx::Kind::Symlink {
+				target: target.into_os_string().into_encoded_bytes(),
+			},
+		);
 
 		// And return the hash so dir treehashing can accumulate.
 		Ok(hash)
 	}
 
-	fn add_recurse_dir(&self, path: &Path) -> io::Result<gittree::Hash> {
+	fn add_recurse_dir(&mut self, path: &Path) -> io::Result<gittree::Hash> {
+		// The dir's entry precedes its children's in the index, but its hash is only known after them,
+		// so it's recorded with a placeholder now and filled in at the end.
+		let slot = self.record(
+			path,
+			treeidx::Kind::Dir {
+				hash: self.placeholder.clone(),
+			},
+		);
+
 		// Begin to walk.
 		// Sort all entries first; we need to form the tree data this way.
 		let scan_path = self.scan_root.join(path);
@@ -320,6 +443,12 @@ impl AddWork<'_> {
 				panic!("unknown file type")
 			}
 		}
-		return Ok(tha.finish());
+		let hash = tha.finish();
+		if let (Some(index), Some(slot)) = (&mut self.index, slot) {
+			index[slot].kind = treeidx::Kind::Dir {
+				hash: hash.clone(),
+			};
+		}
+		Ok(hash)
 	}
 }

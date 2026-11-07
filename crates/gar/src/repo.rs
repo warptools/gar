@@ -90,6 +90,11 @@ impl Repo {
 		shard_dir(&self.treecas_path, hash).join(hash.as_hex())
 	}
 
+	/// Where a tree's index file lives in the treeidx dir: sharded like the treecas, named by the same treehash.
+	pub fn index_path(&self, hash: &gittree::Hash) -> PathBuf {
+		shard_dir(&self.treeidx_path, hash).join(hash.as_hex())
+	}
+
 	/// Creates the shard dirs that `blob_path` for this hash sits in, if they're not already there.
 	pub fn create_blob_shard(&self, hash: &gittree::Hash) -> io::Result<()> {
 		create_shard(&self.blobcas_path, hash)
@@ -98,6 +103,11 @@ impl Repo {
 	/// Creates the shard dirs that `tree_path` for this hash sits in, if they're not already there.
 	pub fn create_tree_shard(&self, hash: &gittree::Hash) -> io::Result<()> {
 		create_shard(&self.treecas_path, hash)
+	}
+
+	/// Creates the shard dirs that `index_path` for this hash sits in, if they're not already there.
+	pub fn create_index_shard(&self, hash: &gittree::Hash) -> io::Result<()> {
+		create_shard(&self.treeidx_path, hash)
 	}
 }
 
@@ -312,6 +322,8 @@ mod tests {
 		assert!(repo.blob_path(&h, false).parent().is_some_and(Path::is_dir));
 		repo.create_tree_shard(&h).expect("tree shard creation");
 		assert!(repo.tree_path(&h).parent().is_some_and(Path::is_dir));
+		repo.create_index_shard(&h).expect("index shard creation");
+		assert!(repo.index_path(&h).parent().is_some_and(Path::is_dir));
 	}
 
 	#[test]
