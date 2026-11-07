@@ -11,6 +11,7 @@ mod clap {
 }
 use clap::Parser;
 
+use std::path::PathBuf;
 use std::process;
 
 fn main() {
@@ -82,17 +83,7 @@ fn main() {
 			process::exit(exitcodes::SUCCESS);
 		},
 		cmds::Subcommands::Add(args) => {
-			if !repo.exists() {
-				match &root_args.repo {
-					Some(_) => eprintln!("no gar repo at {:?}", repo.repo_path()),
-					None => {
-						eprintln!(
-							"this subcommand needs to be run within, or pointed to, a gar repo"
-						)
-					},
-				}
-				process::exit(exitcodes::NO_REPO);
-			}
+			require_repo(&repo, &root_args.repo);
 			// Restores any subdirectory that's gone missing since the repo was made.
 			if let Err(e) = repo.create() {
 				eprintln!("{e}");
@@ -111,10 +102,37 @@ fn main() {
 				},
 			}
 		},
+		cmds::Subcommands::Path(args) => {
+			require_repo(&repo, &root_args.repo);
+			let tree_path = repo.tree_path(&args.hash);
+			// Presence means the entry directory exists; no deeper verification happens here.
+			if !tree_path.is_dir() {
+				eprintln!("tree {} is not in this heap", args.hash.as_hex());
+				process::exit(exitcodes::NOT_IN_STOCK);
+			}
+			// The path is absolute because repo_dir always is: every route to it starts from the cwd.
+			println!("{}", tree_path.display());
+			process::exit(exitcodes::SUCCESS);
+		},
 		cmds::Subcommands::Hash(_) => unreachable!("handled before repo search"),
 	};
 	// let r = repo::Repo::new("/tmp");
 	// r.create_dir_all().expect("waa");
 	// let hash = add::add(&r, "/tmp/slurpie", add::FaithMode::LinkOriginals).expect("whee");
 	// println!("{hash:?}")
+}
+
+/// Reports and exits with `NO_REPO` when the repo isn't present on disk.
+///
+/// The message depends on how the repo was named: an explicit `--repo` can be echoed back,
+/// while a failed search needs a hint about what was being searched for.
+fn require_repo(repo: &repo::Repo, explicit_repo_arg: &Option<PathBuf>) {
+	if repo.exists() {
+		return;
+	}
+	match explicit_repo_arg {
+		Some(_) => eprintln!("no gar repo at {:?}", repo.repo_path()),
+		None => eprintln!("this subcommand needs to be run within, or pointed to, a gar repo"),
+	}
+	process::exit(exitcodes::NO_REPO);
 }
