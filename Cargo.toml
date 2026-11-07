@@ -15,6 +15,7 @@ sha2 = "*"
 hex = "*"
 bytes = "*"
 tempdir = "*"
+tar = { version = "*", default-features = false }
 clap = { version = "*", features = ["derive"] }
 io_tee = "*"
 rstest = "*"

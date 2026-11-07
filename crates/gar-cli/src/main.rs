@@ -4,7 +4,9 @@ mod paths;
 
 use gar::add;
 use gar::demands;
+use gar::export;
 use gar::gc;
+use gar::import;
 use gar::repo;
 
 mod clap {
@@ -13,6 +15,8 @@ mod clap {
 }
 use clap::Parser;
 
+use std::io;
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::process;
 
@@ -153,6 +157,61 @@ fn main() {
 				},
 				Err(e) => {
 					eprintln!("{e}");
+					process::exit(exitcodes::IO_ERROR);
+				},
+			}
+		},
+		cmds::Subcommands::Export(args) => {
+			require_repo(&repo, &root_args.repo);
+			// The same presence check, diagnostic, and exit as `path`:
+			// asking to export an absent tree is the same misunderstanding as asking where it is.
+			if !repo.tree_path(&args.hash).is_dir() {
+				eprintln!("tree {} is not in this heap", args.hash.as_hex());
+				process::exit(exitcodes::NOT_IN_STOCK);
+			}
+			// Stdout carries only tar bytes; anything else said here goes to stderr.
+			let mut out = io::BufWriter::new(io::stdout().lock());
+			let result = export::export(&repo, &args.hash, &mut out).and_then(|()| out.flush());
+			match result {
+				Ok(()) => process::exit(exitcodes::SUCCESS),
+				Err(e) => {
+					eprintln!("export: {e}");
+					process::exit(exitcodes::IO_ERROR);
+				},
+			}
+		},
+		cmds::Subcommands::Import(args) => {
+			require_repo(&repo, &root_args.repo);
+			// Restores any subdirectory that's gone missing since the repo was made, same as add.
+			if let Err(e) = repo.create() {
+				eprintln!("{e}");
+				process::exit(exitcodes::IO_ERROR);
+			}
+			match import::import(&repo, io::stdin().lock()) {
+				Ok(hash) => {
+					if let Some(expect) = &args.expect {
+						if hash != *expect {
+							eprintln!(
+								"import: stored tree {}, but --expect named {} (the stored tree remains in the heap; removal is gc's job)",
+								hash.as_hex(),
+								expect.as_hex()
+							);
+							process::exit(exitcodes::HASH_MISMATCH);
+						}
+					}
+					println!("{}", hash.as_hex());
+					process::exit(exitcodes::SUCCESS);
+				},
+				Err(
+					e @ import::ImportError::Refused {
+						..
+					},
+				) => {
+					eprintln!("import: {e}");
+					process::exit(exitcodes::BAD_TAR);
+				},
+				Err(import::ImportError::Io(e)) => {
+					eprintln!("import: {e}");
 					process::exit(exitcodes::IO_ERROR);
 				},
 			}

@@ -82,6 +82,9 @@ Gar's main commands are `gar init` and `gar add`.
   (Scripts, use this!  The sharded layout is Gar's business; you shouldn't have to compute it yourself.)
 - `gar gc --demands <file>` removes everything from the heap except the trees the demands files name.
   (See the garbage collection section below.)
+- `gar export <hash>` writes that tree to stdout, as a tar stream.
+- `gar import [--expect <hash>]` reads a tar stream from stdin, stores it like `add` does, and prints the treehash.
+  (See the tar transport section below.)
 
 A "gar heap" consists of the following two (or three) directory trees:
 
@@ -126,6 +129,34 @@ and a demanded tree that isn't in the heap is a failing exit code
 Gc must not run concurrently with `gar add`:
 an add may hardlink to a blob the sweep is about to judge unreferenced.
 Nothing locks against this yet, so for now, it's the caller's job to schedule gc in a quiet moment.
+
+### transport with tar
+
+Moving a tree between heaps is a pipe:
+
+```
+gar export $hash | ssh elsewhere gar import --expect $hash
+```
+
+Export is deterministic: the same tree is the same bytes, every time, on every machine.
+The stream is plain, uncompressed tar, readable by ordinary tar tools --
+and pipes compose, so `gar export $hash | zstd` is the compression story.
+Empty directories ride along (they're part of the tree hash, so they must).
+
+Import is the other end, and it's trustless and fail-closed.
+The printed treehash is computed from what was actually stored, never taken from the sender's word,
+so `--expect` plus the exit code is a complete integrity check.
+A mismatched `--expect` is a failing exit, but the stored tree legitimately stays in the heap
+under the hash it really has: a heap is append-only, and removal is gc's job.
+Streams that misbehave are refused outright:
+entry types other than files, directories, and symlinks (devices, fifos, hardlink entries),
+and paths that are absolute or try to `..` their way out of the import.
+
+Import doesn't care who made the tar.  Feeding it archives made by other tools works,
+within the entry-type rules above -- which makes it a way to unpack many overlapping
+tarballs without spending disk on what they share.
+
+The exact stream format is specified in [./README_formats.md](./README_formats.md).
 
 ### Supported Filesystem Attributes and Features
 
@@ -229,15 +260,6 @@ Future (possible) Features
 It might be useful to add another optional directory to Gar heaps
 which contains human-readable labels that are mapped to a treecas hash.
 (This would be reminescent of how git branches and tags point to commit hashes.)
-
-### transport with tar
-
-Planned feature: exporting data from a treecas in a gar heap into a tar stream;
-and importing a tar stream directly into a treecas.
-
-This would be handy for moving data between gar heaps.
-It would also be handy for unpacking lots of tar files with partially overlapping contents without spending lots of disk space on doing so.
-(If you're thinking that latter thing sounds useful for package management and build tools: yes, yes that's the aim.)
 
 ### treeidx files
 

@@ -12,6 +12,8 @@
 //! | 5    | `IO_ERROR`    | something went wrong on the filesystem                    |
 //! | 6    | `NOT_IN_STOCK`| `path` asked about a tree the heap doesn't hold           |
 //! | 7    | `DEMAND_NOT_IN_STOCK` | `gc` was told to keep a tree the heap doesn't hold (the rest of the gc still ran) |
+//! | 8    | `HASH_MISMATCH` | `import --expect` stored the stream, but it hashed to something else (the stored tree stays) |
+//! | 9    | `BAD_TAR`     | `import` refused the tar stream: an unsupported entry type, or an escaping path |
 //!
 //! 2 is unassigned.  The gap stays: renumbering would change the interface for anyone
 //! already reading these, and that's a bigger decision than tidiness.
@@ -23,3 +25,5 @@ pub const REPO_EXISTS: i32 = 4;
 pub const IO_ERROR: i32 = 5;
 pub const NOT_IN_STOCK: i32 = 6;
 pub const DEMAND_NOT_IN_STOCK: i32 = 7;
+pub const HASH_MISMATCH: i32 = 8;
+pub const BAD_TAR: i32 = 9;

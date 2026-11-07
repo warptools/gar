@@ -50,6 +50,36 @@ pub fn gar(cwd: &Path, args: &[&str]) -> Run {
 	}
 }
 
+/// Like `Run`, but with stdout kept as raw bytes, for the commands that speak tar on it.
+pub struct RunBytes {
+	pub code: i32,
+	pub stdout: Vec<u8>,
+	pub stderr: String,
+}
+
+/// Runs gar for the commands that speak tar over the pipes: stdout is captured raw,
+/// and stdin comes from a file when given.
+///
+/// A file rather than an in-memory pipe, because a test writing one pipe while the child
+/// fills another is a deadlock waiting on a buffer size; `< file` has no such cliff.
+pub fn gar_bytes(cwd: &Path, args: &[&str], stdin_file: Option<&Path>) -> RunBytes {
+	let mut cmd = Command::new(gar_bin());
+	cmd.args(args).current_dir(cwd);
+	cmd.stdin(match stdin_file {
+		Some(p) => std::process::Stdio::from(std::fs::File::open(p).expect("the stdin file opens")),
+		None => std::process::Stdio::null(),
+	});
+	let out = cmd.output().expect("gar binary is executable");
+	RunBytes {
+		code: out
+			.status
+			.code()
+			.expect("gar exited rather than being signalled"),
+		stdout: out.stdout,
+		stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+	}
+}
+
 /// A scratch dir to work in.  Named after the test, so a leaked one is traceable.
 pub fn scratch(name: &str) -> tempdir::TempDir {
 	tempdir::TempDir::new(&format!("gar-test-{name}-")).expect("can make a tempdir")
