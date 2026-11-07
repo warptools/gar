@@ -7,3 +7,4 @@ pub mod gc;
 pub mod import;
 pub mod repair;
 pub mod repo;
+pub mod treeidx;
