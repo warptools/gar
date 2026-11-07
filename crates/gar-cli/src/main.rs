@@ -5,6 +5,7 @@ mod paths;
 use gar::add;
 use gar::demands;
 use gar::export;
+use gar::fetch;
 use gar::gc;
 use gar::import;
 use gar::index_backfill;
@@ -305,6 +306,65 @@ fn main() {
 				Err(e) => {
 					eprintln!("index: {e}");
 					process::exit(exitcodes::IO_ERROR);
+				},
+			}
+		},
+		cmds::Subcommands::Fetch(args) => {
+			require_repo(&repo, &root_args.repo);
+			// Restores any subdirectory that's gone missing since the repo was made, same as add.
+			if let Err(e) = repo.create() {
+				eprintln!("{e}");
+				process::exit(exitcodes::IO_ERROR);
+			}
+			let remote = match fetch::Remote::parse(&args.from) {
+				Ok(remote) => remote.into_transport(),
+				Err(e) => {
+					eprintln!("fetch: --from: {e}");
+					process::exit(exitcodes::USAGE);
+				},
+			};
+			// Stdout gets the tree's path and nothing else, as `gar path` prints it: scripts chain on it.
+			match fetch::fetch_tree(&repo, &*remote, &args.hash) {
+				Ok(outcome) => {
+					match outcome {
+						fetch::Outcome::AlreadyInStock => {
+							eprintln!(
+								"fetch: tree {} is already in this heap; nothing fetched",
+								args.hash.as_hex()
+							);
+						},
+						fetch::Outcome::Fetched {
+							blobs_fetched,
+							bytes_fetched,
+							blobs_in_stock,
+						} => {
+							eprintln!(
+								"fetch: fetched {blobs_fetched} blobs ({bytes_fetched} bytes); {blobs_in_stock} blobs already in stock"
+							);
+						},
+					}
+					println!("{}", repo.tree_path(&args.hash).display());
+					process::exit(exitcodes::SUCCESS);
+				},
+				Err(e) => {
+					eprintln!("fetch: {e}");
+					let code = match e {
+						// Both mean the remote can't supply the tree: nothing it served failed verification,
+						// it just doesn't have it all.  (A blob missing behind a verified index is how a heap looks
+						// when its index has outlived its tree, which gc and repair can both leave on purpose.)
+						fetch::FetchError::NotServed {
+							..
+						}
+						| fetch::FetchError::BlobMissing {
+							..
+						} => exitcodes::NOT_IN_STOCK,
+						// Something the remote served doesn't hash to what it claimed.
+						fetch::FetchError::Refused {
+							..
+						} => exitcodes::HASH_MISMATCH,
+						fetch::FetchError::Io(_) => exitcodes::IO_ERROR,
+					};
+					process::exit(code);
 				},
 			}
 		},

@@ -52,6 +52,13 @@ pub enum Subcommands {
 	/// A tree that already has an index file is skipped without being read.
 	/// A tree that doesn't hash to its own name is corrupt: it gets no index, and the exit code says so.
 	Index(IndexCmd),
+
+	/// fetch a tree from another Gar heap, by treehash, and print its path.
+	///
+	/// Only the blobs this heap lacks are fetched.  Nothing the remote says is trusted:
+	/// its index must hash to the treehash asked for, and every blob must hash to its name,
+	/// before anything is committed.
+	Fetch(FetchCmd),
 }
 
 #[derive(clap::Args, Debug)]
@@ -119,6 +126,18 @@ pub struct ImportCmd {
 	/// a Gar heap is append-only, and removal is gc's job.
 	#[arg(long, value_parser = parse_treehash)]
 	pub expect: Option<gittree::Hash>,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct FetchCmd {
+	/// treehash to fetch: exactly 64 lowercase hex characters.
+	#[arg(value_parser = parse_treehash)]
+	pub hash: gittree::Hash,
+
+	/// the remote heap: a local path or an http(s) URL naming the heap's own directory
+	/// (the one that directly contains "blobcas" and "treeidx", which is usually a ".gar" directory).
+	#[arg(long, required = true)]
+	pub from: std::ffi::OsString,
 }
 
 /// Parses a treehash argument strictly, per `Hash::from_hex_strict`:
