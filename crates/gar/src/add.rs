@@ -1,6 +1,5 @@
 use std::fs;
 use std::io;
-use std::io::Seek as _;
 use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -209,14 +208,7 @@ impl AddWork<'_> {
 		Some(index.len() - 1)
 	}
 
-	/// Copy-mode blob intake: copies the open source into a private staging file,
-	/// normalizes its permissions, hashes the copy, and publishes it into the blobcas.
-	///
-	/// Copy first, hash the copy afterward -- don't tee a hash out of the copy, and don't hash the source:
-	/// the plain copy takes kernel fast paths that make it plus a re-read cheaper than streaming
-	/// through userland (see `experiments/benches/direct_copy.rs` for evidence),
-	/// and hashing the bytes we actually publish means a source file mutated mid-add
-	/// still can't put content under a CAS name that doesn't describe it.
+	/// Copy-mode blob intake: stages a copy of the open source, and publishes the copy into the blobcas.
 	///
 	/// Returns the hash and size of the copy: those describe the blob that landed,
 	/// even if the source changed underfoot.
@@ -226,23 +218,7 @@ impl AddWork<'_> {
 		executable: bool,
 	) -> io::Result<(gittree::Hash, u64)> {
 		let staging_path = self.staging_root.join("staged");
-		let mut staged = fs::OpenOptions::new()
-			.read(true)
-			.write(true)
-			.create_new(true)
-			.open(&staging_path)?;
-		io::copy(source, &mut staged)?;
-		// This is an fchmod, so the published mode is exact, umask notwithstanding.
-		// It must happen before the publishing link below: a blobcas inode is never touched again.
-		let mode = if executable {
-			repo::BLOB_MODE_EXEC
-		} else {
-			repo::BLOB_MODE
-		};
-		staged.set_permissions(fs::Permissions::from_mode(mode))?;
-		let size = staged.metadata()?.size();
-		staged.seek(io::SeekFrom::Start(0))?;
-		let hash = gittree::hash_of_stream(&mut staged, size)?;
+		let (hash, size) = blob_landing::stage_blob(source, &staging_path, executable)?;
 		blob_landing::place_blob(self.repo, &staging_path, &hash, executable)?;
 		fs::remove_file(&staging_path)?;
 		Ok((hash, size))
