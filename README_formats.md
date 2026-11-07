@@ -84,6 +84,21 @@ Every file in each directory is a hardlink to files in the blobcas directory,
 which is how Gar deduplicates disk space usage.
 
 
+### the quarantine directory
+
+A `quarantine` directory appears beside the blobcas and treecas only when `gar repair` has found corruption:
+entries whose content provably doesn't match their name are moved here, never deleted.
+
+Each repair run that quarantines anything makes one subdirectory, named `<unix-seconds>-<pid>`,
+and inside it the condemned entries keep their sharded paths under `blobcas/` or `treecas/`
+(so `.gar/quarantine/1767800000-4242/treecas/87/68/8768db…` is where a tree named `8768db…` would land).
+
+Nothing in gar reads the quarantine: it's out of circulation, held for human forensics.
+Quarantined trees still hold hardlinks to blobcas inodes, so their disk space
+is not reclaimed -- not even by `gar gc` -- until the quarantine directory itself is deleted,
+which is a decision gar leaves to you.
+
+
 ### demands files
 
 Demands files are how other tools tell `gar gc` what to keep:

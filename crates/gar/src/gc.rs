@@ -16,6 +16,7 @@ use std::io;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::Path;
 
+use crate::caswalk::for_each_shard_entry;
 use crate::repo;
 
 /// What a gc pass did, and what it couldn't: counts for reporting, and the demands that weren't in stock.
@@ -125,39 +126,6 @@ fn collect_file_inos(dir: &Path, into: &mut HashSet<u64>) -> io::Result<()> {
 			collect_file_inos(&ent.path(), into)?;
 		} else if ft.is_file() {
 			into.insert(ent.metadata()?.ino());
-		}
-	}
-	Ok(())
-}
-
-/// Calls `f` with each entry sitting at shard depth (two directory levels) under `cas_root`.
-///
-/// Dot-prefixed names are skipped at every level: those are staging and temp names
-/// (`.wiptree-*` dirs from in-flight adds, `.gc-*` removal temps), never CAS content.
-/// Non-directories at the shard levels aren't shard dirs, and are skipped likewise.
-fn for_each_shard_entry(
-	cas_root: &Path,
-	f: &mut impl FnMut(&fs::DirEntry) -> io::Result<()>,
-) -> io::Result<()> {
-	for outer in fs::read_dir(cas_root)? {
-		let outer = outer?;
-		if outer.file_name().as_encoded_bytes().starts_with(b".") || !outer.file_type()?.is_dir() {
-			continue;
-		}
-		for inner in fs::read_dir(outer.path())? {
-			let inner = inner?;
-			if inner.file_name().as_encoded_bytes().starts_with(b".")
-				|| !inner.file_type()?.is_dir()
-			{
-				continue;
-			}
-			for ent in fs::read_dir(inner.path())? {
-				let ent = ent?;
-				if ent.file_name().as_encoded_bytes().starts_with(b".") {
-					continue;
-				}
-				f(&ent)?;
-			}
 		}
 	}
 	Ok(())

@@ -14,6 +14,7 @@
 //! | 7    | `DEMAND_NOT_IN_STOCK` | `gc` was told to keep a tree the heap doesn't hold (the rest of the gc still ran) |
 //! | 8    | `HASH_MISMATCH` | `import --expect` stored the stream, but it hashed to something else (the stored tree stays) |
 //! | 9    | `BAD_TAR`     | `import` refused the tar stream: an unsupported entry type, or a path that is absolute or `..`-escaping |
+//! | 10   | `CORRUPTION_FOUND` | `repair` found corruption; the offenders were moved into quarantine |
 //!
 //! An escape attempted by writing through a symlink is refused too, but by the tar unpacker
 //! underneath rather than by gar's own path checks, so it surfaces as 5.
@@ -30,3 +31,4 @@ pub const NOT_IN_STOCK: i32 = 6;
 pub const DEMAND_NOT_IN_STOCK: i32 = 7;
 pub const HASH_MISMATCH: i32 = 8;
 pub const BAD_TAR: i32 = 9;
+pub const CORRUPTION_FOUND: i32 = 10;

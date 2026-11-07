@@ -2,6 +2,11 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// Modes blobs carry in the blobcas: read-only, with the exec bit matching the `-x` name split.
+/// These are a format guarantee; README_formats.md (the blobcas section) is the SSOT for it.
+pub const BLOB_MODE: u32 = 0o444;
+pub const BLOB_MODE_EXEC: u32 = 0o555;
+
 #[derive(Debug)]
 pub struct Repo {
 	/// Path to the repo's own directory.
@@ -62,6 +67,13 @@ impl Repo {
 	}
 	pub fn treeidx_path(&self) -> &Path {
 		&self.treeidx_path
+	}
+
+	/// Where quarantined entries go: repair moves provably corrupt CAS entries here,
+	/// into a per-run subdirectory, rather than ever deleting them.
+	/// Not part of `create`: a healthy heap never has one.
+	pub fn quarantine_path(&self) -> PathBuf {
+		self.path.join("quarantine")
 	}
 
 	/// Where a blob lives in the blobcas.  Executable blobs are stored separately, with a `-x` suffix.

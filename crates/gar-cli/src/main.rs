@@ -7,6 +7,7 @@ use gar::demands;
 use gar::export;
 use gar::gc;
 use gar::import;
+use gar::repair;
 use gar::repo;
 
 mod clap {
@@ -212,6 +213,41 @@ fn main() {
 				},
 				Err(import::ImportError::Io(e)) => {
 					eprintln!("import: {e}");
+					process::exit(exitcodes::IO_ERROR);
+				},
+			}
+		},
+		cmds::Subcommands::Repair(_) => {
+			require_repo(&repo, &root_args.repo);
+			// Restores any subdirectory that's gone missing since the repo was made, same as add:
+			// a vanished blobcas dir is exactly the kind of damage repair exists to rebuild from.
+			if let Err(e) = repo.create() {
+				eprintln!("{e}");
+				process::exit(exitcodes::IO_ERROR);
+			}
+			match repair::repair(&repo) {
+				Ok(report) => {
+					eprintln!(
+						"repair: verified {} blobs and {} trees; relinked {} files, donated {} blobs, normalized {} blob modes",
+						report.blobs_verified,
+						report.trees_verified,
+						report.files_relinked,
+						report.blobs_donated,
+						report.blob_modes_normalized
+					);
+					if let Some(qdir) = &report.quarantine_dir {
+						eprintln!(
+							"repair: corruption found: quarantined {} blobs and {} trees into {}",
+							report.blobs_quarantined,
+							report.trees_quarantined,
+							qdir.display()
+						);
+						process::exit(exitcodes::CORRUPTION_FOUND);
+					}
+					process::exit(exitcodes::SUCCESS);
+				},
+				Err(e) => {
+					eprintln!("repair: {e}");
 					process::exit(exitcodes::IO_ERROR);
 				},
 			}
