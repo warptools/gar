@@ -7,6 +7,7 @@ edition.workspace = true
 gittree = { path = "../gittree" }
 tar.workspace = true
 tempdir.workspace = true
+ureq.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
