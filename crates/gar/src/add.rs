@@ -118,11 +118,6 @@ struct AddWork<'a> {
 	faithmode: FaithMode,
 }
 
-/// Modes blobs carry in the blobcas: read-only, with the exec bit matching the `-x` name split.
-/// These are a format guarantee; README_formats.md (the blobcas section) is the SSOT for it.
-const BLOB_MODE: u32 = 0o444;
-const BLOB_MODE_EXEC: u32 = 0o555;
-
 impl AddWork<'_> {
 	/// Walk the filesystem.  Depth first.
 	/// Hardlink (or move, or copy, depending on faithmode) stuff into the repo's blobcas,
@@ -189,9 +184,9 @@ impl AddWork<'_> {
 		// This is an fchmod, so the published mode is exact, umask notwithstanding.
 		// It must happen before the publishing link below: a blobcas inode is never touched again.
 		let mode = if executable {
-			BLOB_MODE_EXEC
+			repo::BLOB_MODE_EXEC
 		} else {
-			BLOB_MODE
+			repo::BLOB_MODE
 		};
 		staged.set_permissions(fs::Permissions::from_mode(mode))?;
 		let size = staged.metadata()?.size();

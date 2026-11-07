@@ -2,6 +2,11 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// Modes blobs carry in the blobcas: read-only, with the exec bit matching the `-x` name split.
+/// These are a format guarantee; README_formats.md (the blobcas section) is the SSOT for it.
+pub const BLOB_MODE: u32 = 0o444;
+pub const BLOB_MODE_EXEC: u32 = 0o555;
+
 #[derive(Debug)]
 pub struct Repo {
 	/// Path to the repo's own directory.
