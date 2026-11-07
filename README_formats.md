@@ -133,7 +133,8 @@ What import accepts is normative too, and fail-closed:
 
 - Entry types: files, directories, and symlinks.  Anything else (hardlink entries, devices,
   fifos, pax specials) is refused, by entry name, storing nothing.
-- Paths must stay inside the import: absolute paths and paths with `..` components are refused.
+- Paths must stay inside the import: absolute paths and paths with `..` components are refused,
+  and so is writing through a symlink carried earlier in the stream.
   `./` spellings are tolerated (common in foreign tars) but never required.
 - Modes are normalized on landing, exactly as `gar add` would:
   only the user-exec bit of a file entry is read; everything else is discarded.

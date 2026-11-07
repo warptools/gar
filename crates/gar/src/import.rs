@@ -5,6 +5,10 @@
 //! and so is any entry whose path is absolute or tries to `..` its way out.
 //! The tar crate's own `unpack_in` would merely *skip* such paths, which is not refusal;
 //! the checks here happen first, so nothing is quietly dropped or relocated.
+//! One escape class is deliberately left to `unpack_in`, which refuses it with a hard error
+//! (not a skip): writing through a symlink unpacked earlier in the stream.
+//! Checking that here too would be the same check twice; the integration tests
+//! pin that the unpacker holds that line.
 //!
 //! Entries are unpacked into a staging directory inside the repo (dot-prefixed,
 //! cleaned up on drop, same filesystem as the CAS), with modes normalized to the heap's

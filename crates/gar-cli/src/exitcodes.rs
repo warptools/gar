@@ -13,7 +13,10 @@
 //! | 6    | `NOT_IN_STOCK`| `path` asked about a tree the heap doesn't hold           |
 //! | 7    | `DEMAND_NOT_IN_STOCK` | `gc` was told to keep a tree the heap doesn't hold (the rest of the gc still ran) |
 //! | 8    | `HASH_MISMATCH` | `import --expect` stored the stream, but it hashed to something else (the stored tree stays) |
-//! | 9    | `BAD_TAR`     | `import` refused the tar stream: an unsupported entry type, or an escaping path |
+//! | 9    | `BAD_TAR`     | `import` refused the tar stream: an unsupported entry type, or a path that is absolute or `..`-escaping |
+//!
+//! An escape attempted by writing through a symlink is refused too, but by the tar unpacker
+//! underneath rather than by gar's own path checks, so it surfaces as 5.
 //!
 //! 2 is unassigned.  The gap stays: renumbering would change the interface for anyone
 //! already reading these, and that's a bigger decision than tidiness.
