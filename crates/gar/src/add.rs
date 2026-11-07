@@ -5,6 +5,7 @@ use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use crate::blob_landing;
 use crate::index_landing;
 use crate::repo;
 use crate::treeidx;
@@ -208,34 +209,6 @@ impl AddWork<'_> {
 		Some(index.len() - 1)
 	}
 
-	/// Makes `blobcas_path` a hardlink to `source` -- or accepts whatever is already there.
-	///
-	/// A CAS name is never replaced once it exists: replacing it would split the inode family
-	/// shared with existing treecas links, and a racing add can see the swap as a `NotFound`
-	/// in the middle of its own linking.  `link` never clobbers, so an `AlreadyExists` from it
-	/// means the blob is already stored, and that's dedup doing its job: success.
-	///
-	/// Placement is optimistic: shard directories are created only after a `NotFound` says they're missing.
-	/// That trades one failed `link` on each shard's first blob for skipping two `mkdir` calls on every other.
-	fn place_blob(
-		&self,
-		source: &Path,
-		blobcas_path: &Path,
-		hash: &gittree::Hash,
-	) -> io::Result<()> {
-		match fs::hard_link(source, blobcas_path) {
-			Err(e) if e.kind() == io::ErrorKind::NotFound => {
-				self.repo.create_blob_shard(hash)?;
-				match fs::hard_link(source, blobcas_path) {
-					Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(()),
-					r => r,
-				}
-			},
-			Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(()),
-			r => r,
-		}
-	}
-
 	/// Copy-mode blob intake: copies the open source into a private staging file,
 	/// normalizes its permissions, hashes the copy, and publishes it into the blobcas.
 	///
@@ -270,11 +243,7 @@ impl AddWork<'_> {
 		let size = staged.metadata()?.size();
 		staged.seek(io::SeekFrom::Start(0))?;
 		let hash = gittree::hash_of_stream(&mut staged, size)?;
-		self.place_blob(
-			&staging_path,
-			&self.repo.blob_path(&hash, executable),
-			&hash,
-		)?;
+		blob_landing::place_blob(self.repo, &staging_path, &hash, executable)?;
 		fs::remove_file(&staging_path)?;
 		Ok((hash, size))
 	}
@@ -317,11 +286,7 @@ impl AddWork<'_> {
 			// However, this is dangerous if the original file is ever modified again: hardlinks effectively transmit mutations.
 			FaithMode::LinkOriginals => {
 				let hash = gittree::hash_of_stream(&mut file, file_meta.size())?;
-				self.place_blob(
-					&self.scan_root.join(path),
-					&self.repo.blob_path(&hash, executable),
-					&hash,
-				)?;
+				blob_landing::place_blob(self.repo, &self.scan_root.join(path), &hash, executable)?;
 				(hash, file_meta.size())
 			},
 			FaithMode::Move => todo!(),
