@@ -12,11 +12,14 @@
 
 mod entry;
 mod format;
+mod generate;
 mod parse;
 mod refusal;
 mod serialize;
 mod verify;
 
+#[cfg(test)]
+mod generate_test;
 #[cfg(test)]
 mod parse_test;
 #[cfg(test)]
@@ -25,6 +28,7 @@ mod testutil;
 mod verify_test;
 
 pub use entry::{Entry, Kind, TreeIdx};
+pub use generate::{GenerateError, generate};
 pub use parse::parse;
 pub use refusal::{Reason, Refusal};
 pub use serialize::serialize;
