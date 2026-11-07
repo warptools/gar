@@ -197,3 +197,47 @@ fn import_refuses_unsupported_entry_types(#[case] entry_type: tar::EntryType) {
 		r.stderr
 	);
 }
+
+/// The two-step escape: a symlink pointing outside, then a file written through it.
+/// Both entries pass gar's own path checks (all-normal components), so the refusal here
+/// belongs to the tar crate's unpacker -- this test is us double-checking that lane.
+/// The exact exit code is not promised (today it rides the io-error path);
+/// what's pinned is that it fails, and that nothing lands outside.
+#[test]
+fn import_refuses_symlink_traversal() {
+	let td = fresh_heap("tar-symlink-traversal");
+	let outside = td.path().join("outside");
+	std::fs::create_dir(&outside).expect("can make the outside dir");
+	let mut buf = Vec::new();
+	let mut b = tar::Builder::new(&mut buf);
+	// Entry 1: a symlink pointing outside the staging area.
+	let mut h = tar::Header::new_gnu();
+	h.set_path("sneaky").expect("encodes");
+	h.set_entry_type(tar::EntryType::Symlink);
+	h.set_link_name(outside.to_str().expect("utf8"))
+		.expect("encodes");
+	h.set_size(0);
+	h.set_mode(0o777);
+	h.set_cksum();
+	b.append(&h, &[][..]).expect("write");
+	// Entry 2: a file whose path goes through the symlink.
+	let mut h = tar::Header::new_gnu();
+	h.set_path("sneaky/evil").expect("encodes");
+	h.set_entry_type(tar::EntryType::Regular);
+	h.set_size(7);
+	h.set_mode(0o644);
+	h.set_cksum();
+	b.append(&h, &b"gotcha\n"[..]).expect("write");
+	b.finish().expect("finish");
+	drop(b);
+	let tarfile = td.path().join("evil.tar");
+	std::fs::write(&tarfile, buf).expect("can save the evil tar");
+
+	let r = gar_bytes(td.path(), &["import"], Some(&tarfile));
+	assert_ne!(r.code, 0, "a traversal attempt must not be a success");
+	assert!(r.stdout.is_empty(), "no treehash for a refused stream");
+	assert!(
+		!outside.join("evil").exists(),
+		"nothing may land outside the staging area"
+	);
+}

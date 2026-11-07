@@ -151,7 +151,8 @@ A mismatched `--expect` is a failing exit, but the stored tree legitimately stay
 under the hash it really has: a heap is append-only, and removal is gc's job.
 Streams that misbehave are refused outright:
 entry types other than files, directories, and symlinks (devices, fifos, hardlink entries),
-and paths that are absolute or try to `..` their way out of the import.
+and paths that are absolute, try to `..` their way out of the import,
+or try to escape by writing through a symlink.
 
 Import doesn't care who made the tar.  Feeding it archives made by other tools works,
 within the entry-type rules above -- which makes it a way to unpack many overlapping
