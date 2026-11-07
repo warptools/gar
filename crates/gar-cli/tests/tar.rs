@@ -241,3 +241,112 @@ fn import_refuses_symlink_traversal() {
 		"nothing may land outside the staging area"
 	);
 }
+
+/// The same-name replacement game, directory variant: a symlink pointing outside,
+/// then a directory entry at the same name, hoping the directory handling
+/// (the unpacker's, or our own permission normalization) lands on the symlink's target.
+/// Nothing outside may be created, modified, or re-moded.
+#[test]
+fn import_refuses_dir_over_symlink_replacement() {
+	use std::os::unix::fs::PermissionsExt as _;
+	let td = fresh_heap("tar-dir-over-symlink");
+	let outside = td.path().join("outside");
+	std::fs::create_dir(&outside).expect("can make the outside dir");
+	std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o700))
+		.expect("can set a sentinel mode");
+	let mut buf = Vec::new();
+	let mut b = tar::Builder::new(&mut buf);
+	let mut h = tar::Header::new_gnu();
+	h.set_path("sneaky").expect("encodes");
+	h.set_entry_type(tar::EntryType::Symlink);
+	h.set_link_name(outside.to_str().expect("utf8"))
+		.expect("encodes");
+	h.set_size(0);
+	h.set_mode(0o777);
+	h.set_cksum();
+	b.append(&h, &[][..]).expect("write");
+	let mut h = tar::Header::new_gnu();
+	h.set_path("sneaky/").expect("encodes");
+	h.set_entry_type(tar::EntryType::Directory);
+	h.set_size(0);
+	h.set_mode(0o755);
+	h.set_cksum();
+	b.append(&h, &[][..]).expect("write");
+	b.finish().expect("finish");
+	drop(b);
+	let tarfile = td.path().join("evil.tar");
+	std::fs::write(&tarfile, buf).expect("can save the evil tar");
+
+	let r = gar_bytes(td.path(), &["import"], Some(&tarfile));
+	assert_ne!(
+		r.code, 0,
+		"a dir entry landing on a symlink must not be a success"
+	);
+	let mode = std::fs::metadata(&outside)
+		.expect("stat outside")
+		.permissions()
+		.mode()
+		& 0o7777;
+	assert_eq!(mode, 0o700, "the outside dir's mode must be untouched");
+	assert_eq!(
+		std::fs::read_dir(&outside).expect("read outside").count(),
+		0,
+		"nothing may land inside the outside dir"
+	);
+}
+
+/// The same-name replacement game, file variant: a symlink pointing at a file outside,
+/// then a regular file entry at the same name, hoping the write goes through the link.
+/// This stream is legal tar (duplicate names, last entry wins), so the import *succeeds* --
+/// what's pinned is how: the symlink is replaced by the file, never written through,
+/// so the outside file's content is untouched and the stored tree holds a plain file.
+#[test]
+fn import_replaces_a_symlink_rather_than_writing_through_it() {
+	let td = fresh_heap("tar-file-over-symlink");
+	let victim = td.path().join("victim.txt");
+	std::fs::write(&victim, "precious\n").expect("can write the victim file");
+	let mut buf = Vec::new();
+	let mut b = tar::Builder::new(&mut buf);
+	let mut h = tar::Header::new_gnu();
+	h.set_path("sneaky").expect("encodes");
+	h.set_entry_type(tar::EntryType::Symlink);
+	h.set_link_name(victim.to_str().expect("utf8"))
+		.expect("encodes");
+	h.set_size(0);
+	h.set_mode(0o777);
+	h.set_cksum();
+	b.append(&h, &[][..]).expect("write");
+	let mut h = tar::Header::new_gnu();
+	h.set_path("sneaky").expect("encodes");
+	h.set_entry_type(tar::EntryType::Regular);
+	h.set_size(7);
+	h.set_mode(0o644);
+	h.set_cksum();
+	b.append(&h, &b"gotcha\n"[..]).expect("write");
+	b.finish().expect("finish");
+	drop(b);
+	let tarfile = td.path().join("evil.tar");
+	std::fs::write(&tarfile, buf).expect("can save the evil tar");
+
+	let r = gar_bytes(td.path(), &["import"], Some(&tarfile));
+	assert_eq!(
+		r.code, 0,
+		"a legal duplicate-name stream imports; stderr: {}",
+		r.stderr
+	);
+	assert_eq!(
+		std::fs::read_to_string(&victim).expect("read victim"),
+		"precious\n",
+		"the outside file's content must be untouched"
+	);
+	let stored = treecas_entry(td.path(), String::from_utf8_lossy(&r.stdout).trim()).join("sneaky");
+	let meta = std::fs::symlink_metadata(&stored).expect("stat the stored entry");
+	assert!(
+		meta.is_file(),
+		"the last entry won, as a plain file, not a symlink"
+	);
+	assert_eq!(
+		std::fs::read_to_string(&stored).expect("read stored"),
+		"gotcha\n"
+	);
+}
