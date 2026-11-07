@@ -85,6 +85,9 @@ Gar's main commands are `gar init` and `gar add`.
 - `gar export <hash>` writes that tree to stdout, as a tar stream.
 - `gar import [--expect <hash>]` reads a tar stream from stdin, stores it like `add` does, and prints the treehash.
   (See the tar transport section below.)
+- `gar repair` verifies the whole heap from its bytes, restores its hardlink structure,
+  and moves anything provably corrupt into quarantine.
+  (See the repair section below.)
 
 A "gar heap" consists of the following two (or three) directory trees:
 
@@ -159,6 +162,32 @@ within the entry-type rules above -- which makes it a way to unpack many overlap
 tarballs without spending disk on what they share.
 
 The exact stream format is specified in [./README_formats.md](./README_formats.md).
+
+### repair
+
+`gar repair` is for when a heap stops being what a heap should be --
+most often because someone copied it with a tool that breaks hardlinks,
+quietly turning every deduplicated file into its own full-size copy.
+
+Repair rehashes everything and trusts nothing: not names, not link structure, not modes.
+What it finds intact, it leaves alone; what's merely disheveled, it puts back:
+
+- files that lost their hardlink to the blobcas are relinked to it
+  (and the dedup'd disk usage comes back with them);
+- blobs missing from the blobcas entirely are rebuilt from treecas content --
+  a heap that lost its whole blobcas comes back from its trees alone;
+- drifted blob modes are restored to what the blob's name claims.
+
+All of that is quiet success: exit 0, heap whole, nothing lost.
+
+What's provably corrupt -- a blob whose bytes don't hash to its name,
+a tree that no longer recomputes to its directory name -- gets *quarantined*:
+moved to `.gar/quarantine/`, out of circulation but never deleted, and the exit code says so.
+Deciding when the quarantined bytes die is your call, not gar's
+(and reclaiming their space means deleting the quarantine directory; gc won't reach in there).
+
+Repair is idempotent: a second run finds nothing to do.
+Like gc, it shouldn't run concurrently with other heap activity; give it a quiet moment.
 
 ### Supported Filesystem Attributes and Features
 
