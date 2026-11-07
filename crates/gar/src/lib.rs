@@ -7,6 +7,7 @@ pub mod export;
 pub mod gc;
 pub mod import;
 pub mod index_backfill;
+pub mod layout;
 pub mod repair;
 pub mod repo;
 pub mod treeidx;
