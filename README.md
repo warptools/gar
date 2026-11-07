@@ -126,9 +126,10 @@ Gc fails closed: a demands file that doesn't parse means nothing is deleted at a
 and a demanded tree that isn't in the heap is a failing exit code
 (though the gc still completes for everything else first).
 
-Gc must not run concurrently with `gar add`:
-an add may hardlink to a blob the sweep is about to judge unreferenced.
-Nothing locks against this yet, so for now, it's the caller's job to schedule gc in a quiet moment.
+Gc must not run concurrently with any other use of the heap, reads included:
+an add may hardlink to a blob the sweep is about to judge unreferenced,
+and anyone already walking a tree the gc removes will have it deleted out from under them.
+Nothing locks against this yet, so it's the caller's job to schedule gc in a quiet moment.
 
 ### transport with tar
 

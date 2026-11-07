@@ -4,8 +4,11 @@
 //! remove every treecas entry that wasn't demanded,
 //! then unlink every blobcas file whose inode wasn't collected.
 //!
-//! Gc must not run concurrently with adds: an add can link to a blob
-//! the sweep is about to judge unreferenced.  Nothing here locks against that (yet).
+//! Gc must not run concurrently with any other use of the heap.
+//! An add can link to a blob the sweep is about to judge unreferenced,
+//! and a reader already inside a doomed tree has it torn down mid-walk.
+//! Nothing here locks against the add race (yet); for readers there is nothing
+//! a local trick could do anyway -- an open fd outlives any name we could juggle.
 
 use std::collections::HashSet;
 use std::fs;
@@ -91,9 +94,11 @@ pub fn gc(repo: &repo::Repo, demands: &HashSet<gittree::Hash>) -> io::Result<Rep
 }
 
 /// Removes one treecas entry: renamed to a dot-prefixed temp in its shard dir first,
-/// then deleted.  A gc that crashes mid-delete thus leaves a dot-temp,
-/// which readers never see, rather than a half-deleted tree squatting at a valid CAS name --
-/// a missing entry is just "not in stock", but a partial one at its CAS name is corruption.
+/// then deleted.  What the rename buys is a crash property, scoped to lookups by name:
+/// a gc that dies mid-delete leaves a dot-temp, never a half-deleted tree squatting
+/// at a valid CAS name -- a missing entry is just "not in stock", but a partial one
+/// at its CAS name is corruption.  It buys nothing for a reader already holding
+/// the tree open; that's part of why gc must not run concurrently with use.
 fn remove_tree_entry(entry: &Path) -> io::Result<()> {
 	let shard_dir = entry
 		.parent()
