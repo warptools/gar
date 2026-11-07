@@ -5,6 +5,7 @@ use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use crate::index_landing;
 use crate::repo;
 use crate::treeidx;
 use gittree;
@@ -97,7 +98,7 @@ pub fn add_with(
 
 	// The tree is in stock either way now, so the index goes in on both of those paths.
 	if let Some(bytes) = index_bytes {
-		write_index(repo, &hash, &bytes, staging.path())?;
+		index_landing::land_index(repo, &hash, &bytes)?;
 	}
 
 	Ok(hash)
@@ -115,29 +116,6 @@ fn serialize_index(entries: Vec<treeidx::Entry>) -> io::Result<Vec<u8>> {
 			io::ErrorKind::InvalidData,
 			format!("cannot index the tree being added: {refusal}"),
 		)),
-	}
-}
-
-/// Lands a tree's index: written into staging, then renamed into its shard dir,
-/// so the index path never holds a partial file.
-///
-/// Shard dirs are created only after a `NotFound` says they're missing, same as blob placement.
-/// Renaming over an existing index is fine: the format is deterministic, so it holds these same bytes.
-fn write_index(
-	repo: &repo::Repo,
-	hash: &gittree::Hash,
-	bytes: &[u8],
-	staging_root: &Path,
-) -> io::Result<()> {
-	let staged = staging_root.join("index");
-	fs::write(&staged, bytes)?;
-	let dest = repo.index_path(hash);
-	match fs::rename(&staged, &dest) {
-		Err(e) if e.kind() == io::ErrorKind::NotFound => {
-			repo.create_index_shard(hash)?;
-			fs::rename(&staged, &dest)
-		},
-		r => r,
 	}
 }
 
