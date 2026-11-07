@@ -84,6 +84,33 @@ Every file in each directory is a hardlink to files in the blobcas directory,
 which is how Gar deduplicates disk space usage.
 
 
+### demands files
+
+Demands files are how other tools tell `gar gc` what to keep:
+each one names the treehashes that must stay in stock, and `gar gc` removes everything else.
+They're an input format: gar reads them, never writes them, and they don't live inside the heap.
+
+```
+# produced by (your tool here)
+8768db56830498631de8cedd4f40686696953766fefc0f73e28680c998936e48
+2128f977414c236e7a4367508fbc095549e50ae05f26983540e86b0abd7d1e58
+```
+
+The format:
+
+- The file is plain text, split into lines by the LF character (0x0A).
+  (CRLF is not tolerated: a demands file drives deletion, so a mangled file must fail to parse rather than be guessed at.)
+- Each line is exactly one of three things:
+	- a treehash: exactly 64 lowercase hex characters, and nothing else on the line;
+	- a comment: the `#` character as the first character of the line, and then anything;
+	- or blank: completely empty.
+- Anything else is a parse error, and a parse error anywhere rejects the whole file
+  (and a gc handed a rejected file deletes nothing at all).
+
+Duplicate hashes are allowed and mean nothing extra.
+An empty file (or one that's all comments) is legal: it demands nothing.
+
+
 ### garidx files
 
 (This section is a draft.  Garidx files are not yet implemented.)

@@ -8,7 +8,7 @@ use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Hash([u8; 32]);
 
 impl Debug for Hash {
@@ -26,6 +26,18 @@ impl Hash {
 
 	pub fn as_hex(&self) -> String {
 		return hex::encode(self.0);
+	}
+
+	/// Parses the canonical textual form of a hash: exactly 64 lowercase hex characters.
+	///
+	/// `from_hex` would also accept uppercase; interfaces that receive hashes
+	/// (CLI arguments, demands files) reject that instead of downcasing,
+	/// since everything gar prints is lowercase, and anything else suggests a mangled value.
+	pub fn from_hex_strict(s: &str) -> Option<Self> {
+		if s.len() != 64 || !s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+			return None;
+		}
+		Some(Self::from_hex(s).expect("just validated as 64 hex chars"))
 	}
 }
 

@@ -31,6 +31,9 @@ pub enum Subcommands {
 
 	/// print the absolute path of a tree already in Gar storage.
 	Path(PathCmd),
+
+	/// remove everything from Gar storage except the trees named by demands files.
+	Gc(GcCmd),
 }
 
 #[derive(clap::Args, Debug)]
@@ -49,6 +52,17 @@ pub struct HashCmd {
 }
 
 #[derive(clap::Args, Debug)]
+pub struct GcCmd {
+	/// path to a demands file: the treehashes to keep, one per line.
+	/// Repeatable; the kept set is the union of all the files.
+	///
+	/// At least one file is required: a gc that's meant to keep nothing has to say so
+	/// with an explicitly empty file, because a bare "gc" deleting everything is a footgun.
+	#[arg(long = "demands", required = true)]
+	pub demands: Vec<PathBuf>,
+}
+
+#[derive(clap::Args, Debug)]
 pub struct PathCmd {
 	/// treehash to resolve: exactly 64 lowercase hex characters.
 	/// Uppercase is rejected, not downcased: gar itself only ever prints lowercase.
@@ -56,13 +70,9 @@ pub struct PathCmd {
 	pub hash: gittree::Hash,
 }
 
-/// Parses a treehash argument strictly: exactly 64 lowercase hex characters.
-///
-/// `Hash::from_hex` alone would also accept uppercase; the CLI rejects that instead of downcasing,
-/// since every hash gar prints is lowercase, and anything else suggests a mangled value.
+/// Parses a treehash argument strictly, per `Hash::from_hex_strict`:
+/// exactly 64 lowercase hex characters, with uppercase rejected rather than downcased.
 fn parse_treehash(s: &str) -> Result<gittree::Hash, String> {
-	if s.len() != 64 || !s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
-		return Err("a treehash is exactly 64 lowercase hex characters".into());
-	}
-	Ok(gittree::Hash::from_hex(s).expect("just validated as 64 hex chars"))
+	gittree::Hash::from_hex_strict(s)
+		.ok_or_else(|| "a treehash is exactly 64 lowercase hex characters".into())
 }
