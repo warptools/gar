@@ -2,11 +2,12 @@ use std::fs;
 use std::io;
 use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::blob_landing;
 use crate::index_landing;
 use crate::repo;
+use crate::tree_landing;
 use crate::treeidx;
 use gittree;
 
@@ -28,14 +29,13 @@ pub fn add_with(
 	faithmode: FaithMode,
 	indexing: Indexing,
 ) -> Result<gittree::Hash, io::Error> {
-	// Make the tempdir in the treecas root: we'll fill into this,
-	// then move the tempdir into it's CAS-named place at the very end.
+	// The wiptree we'll fill, and then move into its CAS-named place at the very end.
 	//
 	// (n.b., Even if the entire tree we're adding turns out to be familiar... there's no real shortcut to noticing it.
 	// We'll notice only at the end, when we're about ready to commit to CAS.
 	// In Copy mode, this may be unfortunate, because we've done all this write IO already and now have to drop it;
 	// but in either case, we had to do all the read IO, and there's simply no way to avoid _that_.)
-	let td = tempdir::TempDir::new_in(repo.treecas_path(), ".wiptree-")?;
+	let td = tree_landing::new_wiptree(repo)?;
 
 	// Copy mode stages each file here before publishing it into the blobcas.
 	// It sits inside the repo dir so the publishing hardlink never crosses a filesystem.
@@ -72,29 +72,7 @@ pub fn add_with(
 	let index_bytes = w.index.take().map(serialize_index).transpose()?;
 
 	// The final commit: move the whole wiptree into CAS place.
-	// Shard dirs are created only after a `NotFound` says they're missing, same as blob placement.
-	//
-	// A failed rename is tolerated if a directory holds the destination: in a CAS, losing
-	// the rename race to another add manifesting the same tree is success.  The check is on the
-	// destination afterward, not the error kind, because the kinds don't carve this cleanly:
-	// POSIX allows either `EEXIST` or `ENOTEMPTY` for a nonempty directory target, and a rename
-	// onto an existing *empty* directory (the empty tree) succeeds outright.  "Is a directory
-	// there now?" is the actual question.  A non-directory squatting at the name is not that
-	// tree -- returning success would hand back a hash for a heap that lacks it -- so that,
-	// and every other failure, stays an error.
-	let dest_path: PathBuf = repo.tree_path(&hash);
-	let mut treecas_result = fs::rename(&td, &dest_path);
-	if let Err(e) = &treecas_result {
-		if e.kind() == io::ErrorKind::NotFound {
-			repo.create_tree_shard(&hash)?;
-			treecas_result = fs::rename(&td, &dest_path);
-		}
-	}
-	if let Err(e) = treecas_result {
-		if !dest_path.is_dir() {
-			return Err(e);
-		}
-	}
+	tree_landing::commit_tree(repo, &td, &hash)?;
 
 	// The tree is in stock either way now, so the index goes in on both of those paths.
 	if let Some(bytes) = index_bytes {
