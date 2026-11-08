@@ -355,6 +355,10 @@ Run `make` to see all commands.
 Before committing anything, run `make all` (fmt, build, test).
 There should be no warning messages.
 
+`make static` builds a fully static `gar` binary (musl target).
+The whole dependency tree is pure Rust, so this needs nothing beyond the rustup-shipped toolchain:
+no C compiler, no musl packages.
+
 
 License
 -------

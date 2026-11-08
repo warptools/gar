@@ -39,6 +39,13 @@ test: ## Run all tests.
 clean: ## Remove this workspace's build outputs (scoped: the target dir may be shared via CARGO_TARGET_DIR).
 	cargo clean --workspace
 
+# No C toolchain is involved: see .cargo/config.toml.
+.PHONY: static
+static: ## Build a statically linked release binary (musl target).
+	rustup target add x86_64-unknown-linux-musl
+	cargo build --release --target x86_64-unknown-linux-musl -p gar-cli
+	@echo "binary: $${CARGO_TARGET_DIR:-target}/x86_64-unknown-linux-musl/release/gar"
+
 # `--locked` because `cargo install --path` otherwise ignores Cargo.lock and resolves everything afresh.
 .PHONY: install
 install: ## Install binaries into $(MADE)/gar/bin/.
