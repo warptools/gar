@@ -3,6 +3,8 @@
 SHELL  = /bin/bash
 .SHELLFLAGS = -o pipefail -c
 
+MADE ?= $(HOME)/made
+
 .PHONY: all
 all: fmt build test ## Everything that's a must before committing: fmt, build, test.
 
@@ -36,3 +38,8 @@ test: ## Run all tests.
 .PHONY: clean
 clean: ## Remove this workspace's build outputs (scoped: the target dir may be shared via CARGO_TARGET_DIR).
 	cargo clean --workspace
+
+# `--locked` because `cargo install --path` otherwise ignores Cargo.lock and resolves everything afresh.
+.PHONY: install
+install: ## Install binaries into $(MADE)/gar/bin/.
+	cargo install --locked --no-track --force --path crates/gar-cli --root "$(MADE)/gar"
