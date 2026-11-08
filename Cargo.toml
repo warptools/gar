@@ -20,3 +20,18 @@ clap = { version = "*", features = ["derive"] }
 io_tee = "*"
 rstest = "*"
 criterion = "*"
+
+# Build things that are actually usable.
+# I don't know what the compiler thinks it's doing without this, but it's Bad.
+# Without this, a default/debug build gets a sha2 that runs ~35x slower than it should.
+# Yes, THIRTY FIVE times slower.
+# Depends on exact CPU, of course, but we're talking like ~40MB/s vs ~1.4GB/s.
+# That's *so slow that the tool actually becomes CPU bound instead of disk bound*,
+# which is frankly just absurd.
+#
+# I don't know if there's anything else we want from debug builds, either;
+# frankly I think the whole debug/release build dichotomy in Rust is ridiculous-by-default.
+# But as long as the default action of "cargo build" is debug builds,
+# we might as well have them not be completely unusuable.
+[profile.dev]
+opt-level = 3
