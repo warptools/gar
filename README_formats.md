@@ -95,6 +95,10 @@ Each one is the treeidx file (see the format below) of the treecas entry with th
 They're derived data: any of them can be regenerated from its tree, and nothing reading a local heap needs them.
 They're what lets a heap be read from afar, through nothing smarter than a static webserver.
 
+Index files are stored read-only: mode `0444`, like blobs.
+Nothing structural depends on this (an index file has no hardlinks to protect);
+it just keeps the heap uniformly read-only.
+
 An index file can outlive its tree, and that's not corruption:
 `gar gc` keeps an index exactly when its treehash is demanded, whether or not that tree is in stock,
 and `gar repair` leaves index files alone when it quarantines a tree.

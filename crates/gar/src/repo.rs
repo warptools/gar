@@ -9,6 +9,11 @@ use crate::layout;
 pub const BLOB_MODE: u32 = 0o444;
 pub const BLOB_MODE_EXEC: u32 = 0o555;
 
+/// Mode index files carry in the treeidx dir: read-only, like blobs.
+/// Unlike the blob modes this guards nothing structural (index files have no hardlinks);
+/// it keeps the heap uniformly read-only.  README_formats.md (the treeidx dir section) is the SSOT.
+pub const INDEX_MODE: u32 = 0o444;
+
 #[derive(Debug)]
 pub struct Repo {
 	/// Path to the repo's own directory.

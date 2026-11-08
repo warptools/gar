@@ -35,6 +35,8 @@ fn an_index_with_a_mangled_dir_hash_is_refused_before_any_blob() {
 		.expect("the index has nested/");
 	let text = fs::read_to_string(remote.index_path(&hash)).expect("index is utf8 here");
 	assert_eq!(text.matches(&nested_hex).count(), 1);
+	// The stored index is read-only: replace it, don't overwrite.
+	fs::remove_file(remote.index_path(&hash)).expect("remove the stored index");
 	fs::write(
 		remote.index_path(&hash),
 		text.replace(&nested_hex, &"a".repeat(64)),
@@ -71,6 +73,8 @@ fn an_index_for_another_tree_is_refused_before_any_blob() {
 	fs::create_dir(&other_src).expect("mkdir");
 	fs::write(other_src.join("f"), b"other\n").expect("write");
 	let other = add::add(&remote, &other_src, add::FaithMode::Copy).expect("add other");
+	// The stored index is read-only: replace it, don't overwrite.
+	fs::remove_file(remote.index_path(&hash)).expect("remove the stored index");
 	fs::copy(remote.index_path(&other), remote.index_path(&hash)).expect("swap the index");
 	let local = heap(td.path(), "local");
 	let rec = recording_from(&remote);

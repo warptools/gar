@@ -254,7 +254,10 @@ pub fn rewrite_remote_index(
 	let mut entries = remote_index(remote, hash).into_entries();
 	edit(&mut entries);
 	let idx = treeidx::verify(entries).expect("the edit keeps the index verifiable");
-	fs::write(remote.index_path(hash), treeidx::serialize(&idx)).expect("can rewrite the index");
+	// Remove-then-write: the stored index is read-only, and unlike blobs it has no inode to preserve.
+	let path = remote.index_path(hash);
+	fs::remove_file(&path).expect("can remove the stored index");
+	fs::write(&path, treeidx::serialize(&idx)).expect("can write the sabotaged index");
 }
 
 /// Sets the claimed size of the file entry at `path`.

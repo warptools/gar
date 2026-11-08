@@ -55,6 +55,25 @@ fn assert_index_matches_stored_tree(heap: &repo::Repo, hash: &gittree::Hash) {
 	assert_eq!(parsed.root_hash(), hash);
 }
 
+/// Index files land read-only, like blobs.
+/// One test covers every writer (add, import, backfill, fetch): they share the one landing path.
+#[test]
+fn index_lands_read_only() {
+	let td = scratch("index-ro");
+	let heap = repo::init_at(td.path().join("heap")).expect("creating a repo");
+	let dir = specimen(td.path());
+	let hash = add::add(&heap, &dir, FaithMode::Copy).expect("add");
+	let mode = fs::metadata(heap.index_path(&hash))
+		.expect("the index file exists")
+		.permissions()
+		.mode();
+	assert_eq!(
+		mode & 0o7777,
+		repo::INDEX_MODE,
+		"index files land mode 0444, umask notwithstanding"
+	);
+}
+
 #[rstest]
 #[case::copy(FaithMode::Copy)]
 #[case::link_originals(FaithMode::LinkOriginals)]

@@ -96,6 +96,8 @@ fn fetch_refusing_a_lying_remote_exits_8() {
 	fs::create_dir(remote.join("other")).expect("mkdir");
 	fs::write(remote.join("other/f"), b"other\n").expect("write");
 	let other = gar(&remote, &["add", "other"]).stdout.trim().to_owned();
+	// The stored index is read-only: replace it, don't overwrite.
+	fs::remove_file(treeidx_entry(&remote, &hash)).expect("remove the stored index");
 	fs::copy(
 		treeidx_entry(&remote, &other),
 		treeidx_entry(&remote, &hash),
