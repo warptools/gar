@@ -72,19 +72,26 @@ pub fn mode_is_executable(mode: u32) -> bool {
 	mode & 0o100 != 0
 }
 
-/// Sorts directory entries into git's tree entry order.
+/// Returns the key git orders tree entries by: the name bytes, plus a trailing `/` for directories.
 ///
 /// Git sorts entries by name bytes, but compares directory names as if they had a trailing slash.
 /// This differs from a plain name sort whenever a dir name is a prefix of a sibling name
 /// whose next byte is below `/` (e.g. file `foo.` sorts before dir `foo` in git's order).
+pub fn gitwise_sort_key(name: &[u8], is_dir: bool) -> Vec<u8> {
+	let mut key = Vec::with_capacity(name.len() + 1);
+	key.extend_from_slice(name);
+	if is_dir {
+		key.push(b'/');
+	}
+	key
+}
+
+/// Sorts directory entries into git's tree entry order (see `gitwise_sort_key`).
 pub fn sort_dirents_gitwise(entries: &mut Vec<fs::DirEntry>) {
 	entries.sort_by_key(|ent| {
-		let mut key = ent.file_name().into_encoded_bytes();
 		// file_type() only errs on io failure; treat unknowable as non-dir and let hashing surface the error.
-		if ent.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-			key.push(b'/');
-		}
-		key
+		let is_dir = ent.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+		gitwise_sort_key(ent.file_name().as_encoded_bytes(), is_dir)
 	});
 }
 
@@ -164,6 +171,13 @@ mod tests {
 			hex::encode(&hash.0),
 			"2909489adcb095aa795a9a7e6d92db735d0a0ced0782c43496675bdb7beec3ce"
 		);
+	}
+
+	#[test]
+	fn test_gitwise_sort_key_dir_compares_with_slash() {
+		// Plain byte order would put dir `foo` first; git puts it after `foo.` because '.' < '/'.
+		assert!(gitwise_sort_key(b"foo.", false) < gitwise_sort_key(b"foo", true));
+		assert!(gitwise_sort_key(b"foo", true) < gitwise_sort_key(b"foo0", false));
 	}
 
 	#[rstest]

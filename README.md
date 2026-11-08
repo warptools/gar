@@ -88,8 +88,15 @@ Gar's main commands are `gar init` and `gar add`.
 - `gar repair` verifies the whole heap from its bytes, restores its hardlink structure,
   and moves anything provably corrupt into quarantine.
   (See the repair section below.)
+- `gar fetch <hash> --from <base>` pulls a tree out of another heap -- a local one, or one any static webserver is serving --
+  fetching only the blobs this heap doesn't already have, and prints its path, just like `gar path`.
+  (See the fetch transport section below.)
+- `gar index --all` (or `gar index <hash>...`) writes the treeidx file of every tree that lacks one --
+  trees stored by a gar from before treeidx files, say.
+  Trees that already have one are skipped without being read.
+  A tree that doesn't hash to its own name gets no index, and a failing exit code that points at `gar repair`.
 
-A "gar heap" consists of the following two (or three) directory trees:
+A "gar heap" consists of the following three directory trees:
 
 - blobcas -- a large, even-depth directory where every file is stored with a name that is its sha256 blobhash.
 	- plus a suffix of "-x" for files that are executable (this is necessary because hardlinks share mode bits as well as contents).
@@ -97,9 +104,8 @@ A "gar heap" consists of the following two (or three) directory trees:
 	- every file within these is a hardlink to a file in the blobcas.
 	- not every subtree is materialized at the root of this dir (we don't have dir hardlinks, so there would be no point ;)).
 - treeidx -- a directory where every file contains a compact, deterministic, serial representation of the expected hashes of every subtree in each materialized member of treecas.
-	- this is not used in normal read operations (and its creation can be disabled entirely, or it can be regenerated later!).
-	- Its role is to help corruption detection passes point more easily at specific subdirectories that are desynced with the overall tree hash, if corruption does occur.
-	- another role is to support efficient read of whole trees if the Gar heap is exposed over a transport like plain HTTP.  The index file can be transfered in a single request, and thereafter contains enough information to identity every other fetch required to get every blpb, wit no dir walking required... and enough information to make progress bars possible, too!
+	- this is not used in local read operations: `gar add` writes these as it stores each tree, and any that go missing can be regenerated later with `gar index`.
+	- its role is to support efficient read of whole trees when the Gar heap is exposed over a transport like plain HTTP.  The index file is transferred in a single request, and thereafter contains enough information to identify every other fetch required to get every blob, with no dir walking required.  This is what `gar fetch` reads.
 	- (note: while Gar is heavily, heavily based on git, the format of these particular index files is not.  Gar has opted for a much simpler, more readable, and more deterministic format for these.)
 
 Every time you some file and dirs to Gar, the files get copied into blobcas first,
@@ -119,6 +125,7 @@ For each file in the blobcas, its hash can be computed freshly from its contents
 Gar heaps are append-only in normal operation; `gar gc` is how disk space comes back.
 
 `gar gc --demands <file>` removes every tree not named by a demands file,
+and every treeidx file not named by one,
 and then every blob no kept tree still links to.
 A demands file names the treehashes to keep, one per line
 (the exact format is specified in [./README_formats.md](./README_formats.md)).
@@ -162,6 +169,44 @@ within the entry-type rules above -- which makes it a way to unpack many overlap
 tarballs without spending disk on what they share.
 
 The exact stream format is specified in [./README_formats.md](./README_formats.md).
+
+### transport with fetch
+
+Moving a tree between heaps can also be a fetch, from a heap that's merely sitting on a static webserver:
+
+```
+gar fetch $hash --from https://elsewhere.example/.gar
+```
+
+Serving a heap takes nothing more than a static webserver that can see its `.gar` directory:
+no gar on the server, no configuration, just files and GETs.
+`--from` names that directory -- the one directly containing `blobcas/` and `treeidx/` -- as an http(s) URL,
+or as a plain local path, which works just the same.
+
+Fetch reads the tree's treeidx file first, and then fetches only the blobs the local heap doesn't already hold,
+so a tree that mostly overlaps what you already have costs only the difference.
+
+Fetch is trustless and fail-closed, like import.
+The index is checked by arithmetic before a single blob moves: if it doesn't recompute to the treehash asked for, nothing is fetched.
+Every blob is hashed as it lands, and nothing is stored under a name its bytes don't hash to.
+Only once all of that holds is the tree committed, along with an index the local heap writes for itself.
+
+On success, stdout is the tree's path, exactly as `gar path` prints it, so scripts can chain on it;
+a summary goes to stderr.
+Fetching a tree the heap already has succeeds without asking the remote anything: fetch is idempotent.
+A fetch that fails leaves no tree and no index behind, but keeps the blobs it already verified,
+so a rerun picks up where it stopped.
+A remote that doesn't have the tree and a remote that serves something that doesn't verify get different failing exit codes.
+(Connecting gives up after 30 seconds, but a transfer that stalls after connecting waits for you to interrupt it:
+no fixed timeout suits every blob size and every link.)
+
+The remote needs a treeidx file for each tree it serves.
+`gar add` and `gar import` write them as they go, and `gar index --all` fills in any that are missing.
+The treeidx format is specified in [./README_formats.md](./README_formats.md).
+
+Tar or fetch?
+Tar is one stream through one pipe, with no server at all, and it carries every byte every time.
+Fetch needs only a static server (or a path), carries only what's missing, and resumes after a failure.
 
 ### repair
 
@@ -291,18 +336,6 @@ Future (possible) Features
 It might be useful to add another optional directory to Gar heaps
 which contains human-readable labels that are mapped to a treecas hash.
 (This would be reminescent of how git branches and tags point to commit hashes.)
-
-### treeidx files
-
-Treeidx files are meant to contain an all-in-one list of paths in a treecas entry, along with their sizes.
-The purpose of this would be to let a "dumb" HTTP client looking at a gar heap presented by a "dumb" HTTP server with no special configuration
-be able to download all contents of a tree, knowing only the treehash
-(and offer a decent progress bar while doing it, too).
-
-Transport based on treeidx files would involve more connections than a single tar stream (depending on http protocol version),
-but would also allow better deduplication and transfer of only needed subsets of data if the gar heap doing the retrieval already has some contents.
-
-See more about the format of treeidx files in [./README_formats.md](./README_formats.md).
 
 
 

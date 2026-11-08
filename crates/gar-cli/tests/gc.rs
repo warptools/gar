@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::{arg, blobcas_entry, gar, scratch, treecas_entry};
+use common::{arg, blobcas_entry, gar, scratch, treecas_entry, treeidx_entry};
 use std::path::Path;
 
 /// Lays down a directory of files under `root` and adds it to the heap, returning the treehash.
@@ -239,4 +239,143 @@ fn gc_without_a_repo_reports_no_repo() {
 		&["--repo", arg(td.path()), "gc", "--demands", &demands],
 	);
 	assert_eq!(r.code, 3, "stdout: {}, stderr: {}", r.stdout, r.stderr);
+}
+
+/// An index file is kept iff its hash is demanded: the removed tree's index goes with it,
+/// and the kept tree's index stays byte-for-byte.  The summary line counts what went
+/// (a stale index rides along, so the index and tree counts differ).
+#[test]
+fn indexes_follow_the_demands() {
+	let td = scratch("gc-indexes");
+	gar(td.path(), &["init"]);
+	let kept = add_tree(td.path(), "kept", &[("a.txt", "aaa\n")]);
+	let doomed = add_tree(td.path(), "doomed", &[("b.txt", "bbb\n")]);
+	let stale = treeidx_entry(td.path(), &"ab".repeat(32));
+	std::fs::create_dir_all(stale.parent().expect("has a shard dir")).expect("can make shards");
+	std::fs::write(&stale, "stale\n").expect("can plant a stale index");
+	let kept_index =
+		std::fs::read(treeidx_entry(td.path(), &kept)).expect("add wrote the kept tree's index");
+	assert!(treeidx_entry(td.path(), &doomed).is_file());
+	let demands = write_demands(td.path(), "keep.txt", &[&kept]);
+
+	let r = gar(td.path(), &["gc", "--demands", &demands]);
+	assert_eq!(r.code, 0, "stderr: {}", r.stderr);
+	assert_eq!(
+		r.stderr,
+		"gc: kept 1 trees; removed 1 trees, 2 indexes, and 1 blobs\n"
+	);
+	assert!(!treeidx_entry(td.path(), &doomed).exists());
+	assert_eq!(
+		std::fs::read(treeidx_entry(td.path(), &kept)).expect("the kept index still reads"),
+		kept_index
+	);
+}
+
+/// An index whose tree is long gone, and which nobody demands, is swept like any other.
+/// Gc judges it by name alone; the planted contents aren't even a valid index.
+#[test]
+fn stale_index_is_swept() {
+	let td = scratch("gc-stale-index");
+	gar(td.path(), &["init"]);
+	let stale = treeidx_entry(td.path(), &"ab".repeat(32));
+	std::fs::create_dir_all(stale.parent().expect("has a shard dir")).expect("can make shards");
+	std::fs::write(&stale, "not parsed by gc\n").expect("can plant a stale index");
+	let demands = write_demands(td.path(), "keep.txt", &[]);
+
+	let r = gar(td.path(), &["gc", "--demands", &demands]);
+	assert_eq!(r.code, 0, "stderr: {}", r.stderr);
+	assert!(!stale.exists(), "the stale index must be gone");
+}
+
+/// A demanded tree's index survives even when the tree itself is absent:
+/// the demand says someone intends that tree to exist, and the gc fails loudly about it as usual.
+#[test]
+fn index_of_an_absent_demand_is_kept() {
+	let td = scratch("gc-absent-demand-index");
+	gar(td.path(), &["init"]);
+	let absent = "cd".repeat(32);
+	let index = treeidx_entry(td.path(), &absent);
+	std::fs::create_dir_all(index.parent().expect("has a shard dir")).expect("can make shards");
+	std::fs::write(&index, "planted\n").expect("can plant an index");
+	let demands = write_demands(td.path(), "keep.txt", &[&absent]);
+
+	let r = gar(td.path(), &["gc", "--demands", &demands]);
+	assert_eq!(r.code, 7, "stdout: {}, stderr: {}", r.stdout, r.stderr);
+	assert!(
+		r.stderr.contains(&absent),
+		"the report should name the absent hash; stderr: {}",
+		r.stderr
+	);
+	assert_eq!(
+		std::fs::read_to_string(&index).expect("the index is still there"),
+		"planted\n"
+	);
+}
+
+/// Only a regular file with a canonical hash name, at shard depth, is an index file to gc.
+/// Everything else in the treeidx dir isn't gc's to judge, however hash-like it looks.
+#[test]
+fn unrecognized_treeidx_entries_survive() {
+	let td = scratch("gc-treeidx-junk");
+	gar(td.path(), &["init"]);
+	let shard = td.path().join(".gar/treeidx/ef/ef");
+	let hex = "ef".repeat(32);
+	let uppercase = shard.join(hex.to_uppercase());
+	let plain_dir = shard.join("notes");
+	let hex_dir = shard.join(&hex);
+	let hex_symlink = shard.join(format!("ef{}", "0".repeat(62)));
+	std::fs::create_dir_all(&plain_dir).expect("can make a plain dir");
+	std::fs::create_dir_all(&hex_dir).expect("can make a hex-named dir");
+	std::fs::write(&uppercase, "uppercase\n").expect("can plant an uppercase name");
+	std::fs::write(hex_dir.join("inside"), "inside\n").expect("can plant a file in the hex dir");
+	std::os::unix::fs::symlink(&uppercase, &hex_symlink).expect("can plant a hex-named symlink");
+	let demands = write_demands(td.path(), "keep.txt", &[]);
+
+	let r = gar(td.path(), &["gc", "--demands", &demands]);
+	assert_eq!(r.code, 0, "stderr: {}", r.stderr);
+	assert!(uppercase.is_file(), "the uppercase-named file must survive");
+	assert!(plain_dir.is_dir(), "the plain dir must survive");
+	assert!(
+		hex_dir.join("inside").is_file(),
+		"the hex-named dir must survive with its contents"
+	);
+	assert!(
+		hex_symlink.symlink_metadata().is_ok(),
+		"the hex-named symlink must survive"
+	);
+}
+
+/// A heap from before index files has no treeidx dir at all; gc works on it all the same.
+#[test]
+fn heap_without_treeidx_dir() {
+	let td = scratch("gc-no-treeidx");
+	gar(td.path(), &["init"]);
+	let kept = add_tree(td.path(), "kept", &[("a.txt", "aaa\n")]);
+	let doomed = add_tree(td.path(), "doomed", &[("b.txt", "bbb\n")]);
+	std::fs::remove_dir_all(td.path().join(".gar/treeidx")).expect("can remove the treeidx dir");
+	let demands = write_demands(td.path(), "keep.txt", &[&kept]);
+
+	let r = gar(td.path(), &["gc", "--demands", &demands]);
+	assert_eq!(r.code, 0, "stderr: {}", r.stderr);
+	assert!(treecas_entry(td.path(), &kept).is_dir());
+	assert!(!treecas_entry(td.path(), &doomed).exists());
+}
+
+/// A heap missing its treecas is broken, not empty: gc must stop rather than conclude
+/// that no blob is referenced.  (So gc doesn't restore missing heap dirs before running.)
+#[test]
+fn heap_without_treecas_dir_is_an_error() {
+	let td = scratch("gc-no-treecas");
+	gar(td.path(), &["init"]);
+	let tree = add_tree(td.path(), "stuff", &[("a.txt", "aaa\n")]);
+	let blob = blob_hash_of(td.path(), "stuff/a.txt");
+	std::fs::remove_dir_all(td.path().join(".gar/treecas")).expect("can remove the treecas");
+	let demands = write_demands(td.path(), "keep.txt", &[&tree]);
+
+	let r = gar(td.path(), &["gc", "--demands", &demands]);
+	assert_eq!(r.code, 5, "stdout: {}, stderr: {}", r.stdout, r.stderr);
+	assert!(
+		blobcas_entry(td.path(), &blob).exists(),
+		"the blobs must be untouched"
+	);
 }

@@ -28,7 +28,7 @@ and this leads to significantly different conclusions than Git's object dir and 
 
 ### sharding
 
-Both the blobcas and the treecas are sharded:
+The blobcas, the treecas, and the treeidx directory are all sharded:
 entries don't sit directly in the top directory, but two directory levels below it.
 The first level is named by the first two characters of the hash, in hex;
 the second level by the next two;
@@ -39,6 +39,7 @@ Hex is always lowercase.
 .gar/blobcas/29/09/2909489adcb095aa795a9a7e6d92db735d0a0ced0782c43496675bdb7beec3ce
 .gar/blobcas/29/09/2909489adcb095aa795a9a7e6d92db735d0a0ced0782c43496675bdb7beec3ce-x
 .gar/treecas/21/28/2128f977414c236e7a4367508fbc095549e50ae05f26983540e86b0abd7d1e58/
+.gar/treeidx/21/28/2128f977414c236e7a4367508fbc095549e50ae05f26983540e86b0abd7d1e58
 ```
 
 Shard directories are created when the first entry is stored in them, not in advance.
@@ -82,6 +83,25 @@ Gar does not include commit history relationships, and so uses only the treehash
 Each directory is a snapshot of some data that was given to `gar add`.
 Every file in each directory is a hardlink to files in the blobcas directory,
 which is how Gar deduplicates disk space usage.
+
+
+### the treeidx directory
+
+The treeidx directory is full of files with names that are the hex encoding
+of the git tree hash using sha256, sharded as described above.
+
+Each one is the treeidx file (see the format below) of the treecas entry with the same name.
+`gar add` writes one for every tree it stores, `gar fetch` for every tree it fetches, and `gar index` for any tree lacking one.
+They're derived data: any of them can be regenerated from its tree, and nothing reading a local heap needs them.
+They're what lets a heap be read from afar, through nothing smarter than a static webserver.
+
+Index files are stored read-only: mode `0444`, like blobs.
+Nothing structural depends on this (an index file has no hardlinks to protect);
+it just keeps the heap uniformly read-only.
+
+An index file can outlive its tree, and that's not corruption:
+`gar gc` keeps an index exactly when its treehash is demanded, whether or not that tree is in stock,
+and `gar repair` leaves index files alone when it quarantines a tree.
 
 
 ### the quarantine directory
@@ -158,46 +178,85 @@ What import accepts is normative too, and fail-closed:
   A sender's claims are checked by arithmetic, never believed.
 
 
-### garidx files
+### treeidx files
 
-(This section is a draft.  Garidx files are not yet implemented.)
+A treeidx file lists every path in one tree, with everything needed to recompute the tree's hash by arithmetic alone,
+plus the size of every file.
 
-Garidx files are sort of comparable to git pack index files in role, but Gar opted for a much simpler format for these files.
+Treeidx files are sort of comparable to git pack index files in role, but Gar opted for a much simpler format for these files.
 (The git format is binary, and very, [very complex to parse](https://git-scm.com/docs/pack-format) as well as generate,
 and much of that complexity isn't relevant to the subset git that Gar provides equivalences with,
 so overall attempting to directly reuse that format would provide little to no value, at extreme cost.)
 
-Garidx files are meant to be relatively human-readable (and even diff'able).
+Treeidx files are meant to be relatively human-readable (and even diff'able).
 
-They're linebreak delimited[^1], with each line containing one entry, and each entry describing one path (a file or a directory), looking roughly like this:
+They're linebreak delimited[^1], with each line containing one entry, and each entry describing one path (a file, a directory, or a symlink), looking like this:
 
 ```
-# garidx v1
-     2 ./ 040000 - afe3845ba76ec209f86
-     5 ./foo 100644 99 9c4fba7ef811632cde
-     7 ./some/ 040000 - b2a7ee7fc6ba1f387634
-    16 ./some/script.sh 100755 4325 fe9fbc1da76325ef8e
+treeidx v1
+    2 ./ 040000 - 9024a7f8afa43db06ff2b50d9ac9c21b791bee49d8092d3f14f1e433bfd927fa
+    8 ./a_dir/ 040000 - e1896fb25dd721b447c52e40267a90405ebc41aaa2c7143e9cf58cf5c8421cde
+   15 ./a_dir/deeper/ 040000 - 9897054d9f01c666ac1371d3e0a022a67b5df59ddb1608e8165a3b1fa22da706
+   23 ./a_dir/deeper/samefile 100644 10 4698ba4d7c51602d6a50e4fb6e150e2e06d625ba5874cde627bc6dfc357a23db
+   18 ./a_dir/more_files 100644 10 4698ba4d7c51602d6a50e4fb6e150e2e06d625ba5874cde627bc6dfc357a23db
+   18 ./a_dir/other_file 100644 12 8431d03990244d0bffa3dfecdd7a67d0bca2f5e999bff04469cde93cc2365d96
+    8 ./a_file 100644 7 2909489adcb095aa795a9a7e6d92db735d0a0ced0782c43496675bdb7beec3ce
+   11 ./a_symlink 120000 13 target string
 ```
+
+(Note the symlink at the end: its target has a space in it, and it's the 13 that says where the target ends.)
 
 The parse of this is as follows:
 
-- (The first line is a version and filetype indicator.  Currently this is always exact "garidx v1".)
+- (The first line is a version and filetype indicator.  Currently this is always exactly "treeidx v1".)
 - Each entry starts with a fixed width five bytes which contains an ascii base-10 number, right-aligned by prefix padding with space characters, followed by a space character.
 - Next is the path: this has the length (in bytes) indicated by the preceding number.  Another space character follows the path.
 	- Note!  You _must_ use the length prefix to determine how long the path is, in order to correctly handle paths that contain spaces or linebreaks characters!
+	- The length counts the path exactly as written: its `./` prefix, and a directory's trailing `/`, included.  So the longest path a treeidx can carry is 99999 bytes, decoration and all[^2].
 - The git tree mode number follows.  (This is six bytes, and effectively is one of four values: "100644" for files, "100755" for executable files, "040000" for dirs, and "120000" for symlinks.)  Then, another space.
 - A size hint follows, as an ascii base-10 number.  For directories, it is instead a dash character.  Then, another space.
-- The treehash (or blobhash) sha256 of the object, encoded in base58, follows.
+	- For a file, it's the file's length in bytes.  For a symlink, it's the length in bytes of the symlink's target.  Either way, it must be exact.  (Why it's still called a hint, and why it can be trusted: see below.)
+- The treehash (or blobhash) sha256 of the object, encoded in lowercase hex (all 64 characters), follows.
+	- Except for symlinks, which have no hash here: their target follows instead, as raw bytes, exactly as many as the size hint says.  (A symlink's blobhash is just the hash of its target, so anyone holding the target can compute it.)
 - Then, a line break.  That's the end of the entry.
+
+Every tree has exactly one valid treeidx, down to the byte, and a parser refuses anything else, whole:
+
+- The first entry is the root directory, spelled `./`.
+  After it, entries come in depth-first preorder: a directory's entry is followed by everything inside it, before whatever comes after that directory.
+- Entries within one directory are in git's tree order: byte order of names, with directories compared as if suffixed with `/`
+  (the order tree hashing visits them in, and the order `gar export` writes).
+- Numbers are plain ascii decimal, with no leading zeros.
+- Outside of paths and symlink targets, spaces appear only as single separators between fields, and as the length field's left padding.
+- Paths begin with `./`, and end with `/` if and only if they're directories.
+  In between, every `/`-separated segment is non-empty, is never `.` or `..`, and never contains a NUL byte.
+- No path appears twice -- not even once as a file and once as a directory.
+- Symlink targets are non-empty and never contain a NUL byte.  (No symlink on disk can have either.)
+- The file ends right after the last entry's line break.
+
+A treeidx is a list of claims, and every one of them can be checked.
+Gar checks them all before committing anything an index describes:
+
+- Hashes: everything git's tree hashing needs is right there in the entries -- names, modes, blob hashes, and symlink targets (which hash inline) --
+  so every directory's hash, the root's included, recomputes from the entries by pure arithmetic, with no file IO.
+  A directory whose claimed hash doesn't recompute, or a root that isn't the treehash asked for, gets the whole index refused,
+  before a single blob is fetched.
+- Sizes: tree hashes don't cover sizes (which is why the field is a "hint"), so the arithmetic can't check them.
+  But a blob's hash commits to its length, so each size claim can be checked against the blob it names, wherever that blob came from.
+  `gar fetch` checks every one, even for blobs it already had and so didn't fetch,
+  and it stops reading any blob that runs past its claimed size.
+
+And gar never stores a treeidx it was handed: it writes its own, canonically, from the entries it checked.
+So a lie in a remote's index can't survive into a heap, and every size hint inside a heap is exact.
 
 Some incidental details to note:
 
 - Paths always begin with a dot.  This is redundant, but we consider it a visual nicety.
 - Paths that are directories are encoded with a trailing slash.  This is redundant considering the mode number also indicates directories, but we consider it a visual nicety.
-- The choice of a fixed with length indicator is for (yes, again -- you guessed it) visual nicety.  It makes it easier for a human reader to scroll through a large garidx file and see shared path prefixes by just eyeballing it.
-- If you're _sure_ there's no spaces or linebreaks in any filenames in a dataset you're examining... yes, you can parse this easily with `awk`  or even sheer `column` in a shell script. ;)
+- The choice of a fixed with length indicator is for (yes, again -- you guessed it) visual nicety.  It makes it easier for a human reader to scroll through a large treeidx file and see shared path prefixes by just eyeballing it.
+- If you're _sure_ there's no spaces or linebreaks in any filenames (or symlink targets) in a dataset you're examining... yes, you can parse this easily with `awk`  or even sheer `column` in a shell script. ;)
 
 
-[^1] -- Sort of.  The garidx format uses linebreaks, and the linebreaks are required, but a parser should not _parse_ by splitting upon them.  In the event of a filename that contains a linebreak (unusual, but legal!), there will be _another line break_ in the garidx file.  The only fully correct way to parse is by reading the length numbers at the start of each entry.
+[^1] -- Sort of.  The treeidx format uses linebreaks, and the linebreaks are required, but a parser should not _parse_ by splitting upon them.  In the event of a filename (or symlink target) that contains a linebreak (unusual, but legal!), there will be _another line break_ in the treeidx file.  The only fully correct way to parse is by reading the length numbers at the start of each entry (and, for symlinks, the size hint).
 
-[^2] -- About path size limits: we've decided that "five digits base 10 is enough", but if you truly dive into this, one can argue that there are not rules.  Path limits could come from the kernel, or from the filesystem.  When they're from the kernel, they can be changed by... recompiling the kernel.  Some numbers we've seen in the wild are: NTFS specified a length limit of 32768 bytes for a whole path.  Linux typically specifies 256 bytes per path segment, and reputedly at some point had a limit of 4096 overall (although I currently find no evidence of a limit this low on my systems).  Windows has been known to specify some truly short numbers we will not discuss.  But ultimately: when is the last time you handled a path more than 4 kilobytes long?  We think Gar can be useful even when enforcing a limit slightly over twice that.
+[^2] -- About path size limits: we've decided that "five digits base 10 is enough", but if you truly dive into this, one can argue that there are not rules.  Path limits could come from the kernel, or from the filesystem.  When they're from the kernel, they can be changed by... recompiling the kernel.  Some numbers we've seen in the wild are: NTFS specified a length limit of 32768 bytes for a whole path.  Linux typically specifies 256 bytes per path segment, and reputedly at some point had a limit of 4096 overall (although I currently find no evidence of a limit this low on my systems).  Windows has been known to specify some truly short numbers we will not discuss.  But ultimately: when is the last time you handled a path more than 4 kilobytes long?  We think Gar can be useful even when enforcing a limit some twenty-four times that.

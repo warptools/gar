@@ -44,6 +44,21 @@ pub enum Subcommands {
 	/// verify the whole heap from its bytes, restore its hardlink structure,
 	/// and move anything provably corrupt into quarantine.
 	Repair(RepairCmd),
+
+	/// write the missing treeidx files of trees already in Gar storage.
+	///
+	/// Which trees has to be said: either --all, or one or more treehashes, but not both.
+	/// There's no default, so a bare "gar index" is a usage error rather than a guess.
+	/// A tree that already has an index file is skipped without being read.
+	/// A tree that doesn't hash to its own name is corrupt: it gets no index, and the exit code says so.
+	Index(IndexCmd),
+
+	/// fetch a tree from another Gar heap, by treehash, and print its path.
+	///
+	/// Only the blobs this heap lacks are fetched.  Nothing the remote says is trusted:
+	/// its index must hash to the treehash asked for, and every blob must hash to its name,
+	/// before anything is committed.
+	Fetch(FetchCmd),
 }
 
 #[derive(clap::Args, Debug)]
@@ -93,12 +108,36 @@ pub struct ExportCmd {
 pub struct RepairCmd {}
 
 #[derive(clap::Args, Debug)]
+#[group(required = true, multiple = false)]
+pub struct IndexCmd {
+	/// index every tree in the heap that lacks an index.  Can't be combined with naming treehashes.
+	#[arg(long)]
+	pub all: bool,
+
+	/// treehashes to index: each exactly 64 lowercase hex characters.  Can't be combined with --all.
+	#[arg(value_parser = parse_treehash)]
+	pub hashes: Vec<gittree::Hash>,
+}
+
+#[derive(clap::Args, Debug)]
 pub struct ImportCmd {
 	/// treehash the stream is expected to store as.  A mismatch is a failing exit,
 	/// but the stored tree remains in the heap under the hash it actually has:
 	/// a Gar heap is append-only, and removal is gc's job.
 	#[arg(long, value_parser = parse_treehash)]
 	pub expect: Option<gittree::Hash>,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct FetchCmd {
+	/// treehash to fetch: exactly 64 lowercase hex characters.
+	#[arg(value_parser = parse_treehash)]
+	pub hash: gittree::Hash,
+
+	/// the remote heap: a local path or an http(s) URL naming the heap's own directory
+	/// (the one that directly contains "blobcas" and "treeidx", which is usually a ".gar" directory).
+	#[arg(long, required = true)]
+	pub from: std::ffi::OsString,
 }
 
 /// Parses a treehash argument strictly, per `Hash::from_hex_strict`:

@@ -105,6 +105,14 @@ pub fn blobcas_entry(root: &Path, hash: &str) -> PathBuf {
 		.join(hash)
 }
 
+/// Where a tree's index file lands in the heap under `root`, per the sharded layout.  Same spirit as `treecas_entry`.
+pub fn treeidx_entry(root: &Path, hash: &str) -> PathBuf {
+	root.join(".gar/treeidx")
+		.join(&hash[0..2])
+		.join(&hash[2..4])
+		.join(hash)
+}
+
 /// Paths from a tempdir are passed as args; this is the unwrap for that.
 pub fn arg(p: &Path) -> &str {
 	p.to_str().expect("tempdir paths are utf8")

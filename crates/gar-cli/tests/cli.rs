@@ -209,6 +209,39 @@ fn add_links_tree_entries_to_sharded_blobs() {
 	);
 }
 
+/// Every add writes the tree's index, at a layout path as literal as the treecas one,
+/// with the bytes the treeidx format dictates for this tree.
+#[test]
+fn add_writes_the_tree_index() {
+	use std::os::unix::fs::PermissionsExt;
+
+	let td = scratch("add-index");
+	gar(td.path(), &["init"]);
+	let stuff = td.path().join("stuff");
+	std::fs::create_dir(&stuff).expect("mkdir stuff");
+	std::fs::write(stuff.join("a_file"), b"a file\n").expect("write a file");
+	std::fs::write(stuff.join("a_script"), b"a file\n").expect("write a script");
+	std::fs::set_permissions(stuff.join("a_script"), PermissionsExt::from_mode(0o755))
+		.expect("chmod the script");
+
+	let r = gar(td.path(), &["add", "stuff"]);
+	assert_eq!(r.code, 0, "stderr: {}", r.stderr);
+	let hash = "2128f977414c236e7a4367508fbc095549e50ae05f26983540e86b0abd7d1e58";
+	assert_eq!(r.stdout.trim(), hash);
+	let index = std::fs::read_to_string(td.path().join(format!(".gar/treeidx/21/28/{hash}")))
+		.expect("the index is at its sharded path");
+	let blob = "2909489adcb095aa795a9a7e6d92db735d0a0ced0782c43496675bdb7beec3ce";
+	let want: String = [
+		"treeidx v1".to_owned(),
+		format!("    2 ./ 040000 - {hash}"),
+		format!("    8 ./a_file 100644 7 {blob}"),
+		format!("   10 ./a_script 100755 7 {blob}"),
+	]
+	.map(|line| line + "\n")
+	.concat();
+	assert_eq!(index, want);
+}
+
 /// Copying is the default: the heap must never share an inode with the user's originals,
 /// so later edits to those originals can't reach into it.
 #[test]

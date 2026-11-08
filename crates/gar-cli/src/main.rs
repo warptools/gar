@@ -5,8 +5,10 @@ mod paths;
 use gar::add;
 use gar::demands;
 use gar::export;
+use gar::fetch;
 use gar::gc;
 use gar::import;
+use gar::index_backfill;
 use gar::repair;
 use gar::repo;
 
@@ -123,6 +125,8 @@ fn main() {
 		},
 		cmds::Subcommands::Gc(args) => {
 			require_repo(&repo, &root_args.repo);
+			// No `repo.create()` here, unlike add: a recreated empty treecas would read as
+			// "no tree references any blob", and the sweep would empty the blobcas.
 			// Every demands file is read and parsed in full before anything is deleted:
 			// a gc driven by a half-understood demands list must not get to touch the heap.
 			let mut demanded = std::collections::HashSet::new();
@@ -145,8 +149,11 @@ fn main() {
 			match gc::gc(&repo, &demanded) {
 				Ok(report) => {
 					eprintln!(
-						"gc: kept {} trees; removed {} trees and {} blobs",
-						report.trees_kept, report.trees_removed, report.blobs_removed
+						"gc: kept {} trees; removed {} trees, {} indexes, and {} blobs",
+						report.trees_kept,
+						report.trees_removed,
+						report.indexes_removed,
+						report.blobs_removed
 					);
 					if !report.absent_demands.is_empty() {
 						for hash in &report.absent_demands {
@@ -249,6 +256,115 @@ fn main() {
 				Err(e) => {
 					eprintln!("repair: {e}");
 					process::exit(exitcodes::IO_ERROR);
+				},
+			}
+		},
+		cmds::Subcommands::Index(args) => {
+			require_repo(&repo, &root_args.repo);
+			// Restores any subdirectory that's gone missing since the repo was made, same as add:
+			// that includes a treeidx dir that a heap from before indexes never had.
+			if let Err(e) = repo.create() {
+				eprintln!("{e}");
+				process::exit(exitcodes::IO_ERROR);
+			}
+			let result = if args.all {
+				index_backfill::index_all(&repo)
+			} else {
+				index_backfill::index_named(&repo, &args.hashes)
+			};
+			// Nothing goes on stdout: an index's path follows from its hash, so there's no result to hand a script,
+			// and the exit code says whether every tree asked about now has one.
+			match result {
+				Ok(report) => {
+					eprintln!(
+						"index: indexed {} trees; {} already indexed; {} corrupt; {} not in this heap",
+						report.indexed,
+						report.already_indexed,
+						report.corrupt.len(),
+						report.not_in_stock.len()
+					);
+					for c in &report.corrupt {
+						eprintln!(
+							"index: tree {} is corrupt: its content hashes to {}, so no index was written for it (`gar repair` will move it into quarantine)",
+							c.name.as_hex(),
+							c.computed.as_hex()
+						);
+					}
+					for hash in &report.not_in_stock {
+						eprintln!("index: tree {} is not in this heap", hash.as_hex());
+					}
+					// When both happen, corruption decides the exit code:
+					// it's damage in the heap that needs acting on, where an absent tree is only a request that missed.
+					if !report.corrupt.is_empty() {
+						process::exit(exitcodes::CORRUPTION_FOUND);
+					}
+					if !report.not_in_stock.is_empty() {
+						process::exit(exitcodes::NOT_IN_STOCK);
+					}
+					process::exit(exitcodes::SUCCESS);
+				},
+				Err(e) => {
+					eprintln!("index: {e}");
+					process::exit(exitcodes::IO_ERROR);
+				},
+			}
+		},
+		cmds::Subcommands::Fetch(args) => {
+			require_repo(&repo, &root_args.repo);
+			// Restores any subdirectory that's gone missing since the repo was made, same as add.
+			if let Err(e) = repo.create() {
+				eprintln!("{e}");
+				process::exit(exitcodes::IO_ERROR);
+			}
+			let remote = match fetch::Remote::parse(&args.from) {
+				Ok(remote) => remote.into_transport(),
+				Err(e) => {
+					eprintln!("fetch: --from: {e}");
+					process::exit(exitcodes::USAGE);
+				},
+			};
+			// Stdout gets the tree's path and nothing else, as `gar path` prints it: scripts chain on it.
+			match fetch::fetch_tree(&repo, &*remote, &args.hash) {
+				Ok(outcome) => {
+					match outcome {
+						fetch::Outcome::AlreadyInStock => {
+							eprintln!(
+								"fetch: tree {} is already in this heap; nothing fetched",
+								args.hash.as_hex()
+							);
+						},
+						fetch::Outcome::Fetched {
+							blobs_fetched,
+							bytes_fetched,
+							blobs_in_stock,
+						} => {
+							eprintln!(
+								"fetch: fetched {blobs_fetched} blobs ({bytes_fetched} bytes); {blobs_in_stock} blobs already in stock"
+							);
+						},
+					}
+					println!("{}", repo.tree_path(&args.hash).display());
+					process::exit(exitcodes::SUCCESS);
+				},
+				Err(e) => {
+					eprintln!("fetch: {e}");
+					let code = match e {
+						// Both mean the remote can't supply the tree: nothing it served failed verification,
+						// it just doesn't have it all.  (A blob missing behind a verified index is how a heap looks
+						// when its index has outlived its tree, which gc and repair can both leave on purpose.)
+						fetch::FetchError::NotServed {
+							..
+						}
+						| fetch::FetchError::BlobMissing {
+							..
+						} => exitcodes::NOT_IN_STOCK,
+						// Something the remote served doesn't hash to what it claimed.
+						fetch::FetchError::Refused {
+							..
+						} => exitcodes::HASH_MISMATCH,
+						fetch::FetchError::Io(_) => exitcodes::IO_ERROR,
+					};
+					process::exit(code);
 				},
 			}
 		},

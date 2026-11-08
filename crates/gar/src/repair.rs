@@ -32,6 +32,7 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
 use crate::caswalk::for_each_shard_entry;
+use crate::layout;
 use crate::repo;
 
 /// What a repair pass did: counts for reporting, and where anything quarantined went.
@@ -74,7 +75,7 @@ pub fn repair(repo: &repo::Repo) -> io::Result<Report> {
 		let Some(name) = name.to_str() else {
 			return Ok(());
 		};
-		let Some((hash, exec)) = parse_blob_name(name) else {
+		let Some((hash, exec)) = layout::parse_blob_name(name) else {
 			return Ok(());
 		};
 		let path = ent.path();
@@ -86,14 +87,14 @@ pub fn repair(repo: &repo::Repo) -> io::Result<Report> {
 		// repair would never be idempotent.  So the second name met on any verified inode
 		// is quarantined unread.
 		if verified.contains_key(&meta.ino()) {
-			quarantine.take("blobcas", name, &path)?;
+			quarantine.take(&layout::blob(&hash, exec), &path)?;
 			report.blobs_quarantined += 1;
 			return Ok(());
 		}
 		let mut f = fs::File::open(&path)?;
 		let actual = gittree::hash_of_stream(&mut f, meta.size())?;
 		if actual != hash {
-			quarantine.take("blobcas", name, &path)?;
+			quarantine.take(&layout::blob(&hash, exec), &path)?;
 			report.blobs_quarantined += 1;
 			return Ok(());
 		}
@@ -135,7 +136,7 @@ pub fn repair(repo: &repo::Repo) -> io::Result<Report> {
 			// drifted or the name lies is undecidable from here; what's certain is that
 			// handing this directory out under this hash would be serving corruption.
 			_ => {
-				quarantine.take("treecas", name, &ent.path())?;
+				quarantine.take(&layout::tree(&claimed), &ent.path())?;
 				report.trees_quarantined += 1;
 			},
 		}
@@ -144,16 +145,6 @@ pub fn repair(repo: &repo::Repo) -> io::Result<Report> {
 
 	report.quarantine_dir = quarantine.run_dir;
 	Ok(report)
-}
-
-/// Parses a blobcas file name: 64 lowercase hex characters, with an optional `-x` suffix
-/// marking the executable variant.  Anything else is not a blob name.
-fn parse_blob_name(name: &str) -> Option<(gittree::Hash, bool)> {
-	let (hex, exec) = match name.strip_suffix("-x") {
-		Some(hex) => (hex, true),
-		None => (name, false),
-	};
-	gittree::Hash::from_hex_strict(hex).map(|h| (h, exec))
 }
 
 /// Rehashes one directory of a treecas entry, repairing file links along the way.
@@ -278,14 +269,14 @@ struct Quarantine<'a> {
 }
 
 impl Quarantine<'_> {
-	/// Moves one CAS entry out of circulation, preserving its sharded path under
-	/// `.gar/quarantine/<unix-seconds>-<pid>/{blobcas,treecas}/`.
+	/// Moves one CAS entry out of circulation, preserving its heap-relative path
+	/// (`{blobcas,treecas}/{ab}/{cd}/{name}`) under `.gar/quarantine/<unix-seconds>-<pid>/`.
 	/// A rename, not a copy: same filesystem, instant, and it keeps the inode family intact
 	/// for anyone doing forensics later.
 	///
 	/// The run dir name is unix seconds plus pid: enough to keep runs apart
 	/// (including a crashed run retried in the same second) without reaching for a date library.
-	fn take(&mut self, kind: &str, name: &str, src: &Path) -> io::Result<()> {
+	fn take(&mut self, rel: &layout::RelPath, src: &Path) -> io::Result<()> {
 		let run_dir = match &self.run_dir {
 			Some(d) => d,
 			None => {
@@ -301,8 +292,8 @@ impl Quarantine<'_> {
 				self.run_dir.insert(d)
 			},
 		};
-		let shard = run_dir.join(kind).join(&name[0..2]).join(&name[2..4]);
-		fs::create_dir_all(&shard)?;
-		fs::rename(src, shard.join(name))
+		let dest = run_dir.join(rel);
+		fs::create_dir_all(dest.parent().expect("a heap-relative path has a shard dir"))?;
+		fs::rename(src, dest)
 	}
 }

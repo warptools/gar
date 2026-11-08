@@ -2,10 +2,17 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::layout;
+
 /// Modes blobs carry in the blobcas: read-only, with the exec bit matching the `-x` name split.
 /// These are a format guarantee; README_formats.md (the blobcas section) is the SSOT for it.
 pub const BLOB_MODE: u32 = 0o444;
 pub const BLOB_MODE_EXEC: u32 = 0o555;
+
+/// Mode index files carry in the treeidx dir: read-only, like blobs.
+/// Unlike the blob modes this guards nothing structural (index files have no hardlinks);
+/// it keeps the heap uniformly read-only.  README_formats.md (the treeidx dir section) is the SSOT.
+pub const INDEX_MODE: u32 = 0o444;
 
 #[derive(Debug)]
 pub struct Repo {
@@ -24,9 +31,9 @@ impl Repo {
 	pub fn new(root_path: impl AsRef<Path>) -> Self {
 		let path = root_path.as_ref().join(".gar");
 		Repo {
-			blobcas_path: (&path).join("blobcas"),
-			treecas_path: (&path).join("treecas"),
-			treeidx_path: (&path).join("treeidx"),
+			blobcas_path: (&path).join(layout::BLOBCAS),
+			treecas_path: (&path).join(layout::TREECAS),
+			treeidx_path: (&path).join(layout::TREEIDX),
 			path,
 		}
 	}
@@ -73,55 +80,54 @@ impl Repo {
 	/// into a per-run subdirectory, rather than ever deleting them.
 	/// Not part of `create`: a healthy heap never has one.
 	pub fn quarantine_path(&self) -> PathBuf {
-		self.path.join("quarantine")
+		self.path.join(layout::QUARANTINE)
 	}
 
 	/// Where a blob lives in the blobcas.  Executable blobs are stored separately, with a `-x` suffix.
 	pub fn blob_path(&self, hash: &gittree::Hash, executable: bool) -> PathBuf {
-		let mut name = hash.as_hex();
-		if executable {
-			name.push_str("-x");
-		}
-		shard_dir(&self.blobcas_path, hash).join(name)
+		self.path.join(layout::blob(hash, executable))
 	}
 
 	/// Where a tree lives in the treecas.
 	pub fn tree_path(&self, hash: &gittree::Hash) -> PathBuf {
-		shard_dir(&self.treecas_path, hash).join(hash.as_hex())
+		self.path.join(layout::tree(hash))
+	}
+
+	/// Where a tree's index file lives in the treeidx dir: sharded like the treecas, named by the same treehash.
+	pub fn index_path(&self, hash: &gittree::Hash) -> PathBuf {
+		self.path.join(layout::index(hash))
 	}
 
 	/// Creates the shard dirs that `blob_path` for this hash sits in, if they're not already there.
 	pub fn create_blob_shard(&self, hash: &gittree::Hash) -> io::Result<()> {
-		create_shard(&self.blobcas_path, hash)
+		create_shard_for(&self.blob_path(hash, false))
 	}
 
 	/// Creates the shard dirs that `tree_path` for this hash sits in, if they're not already there.
 	pub fn create_tree_shard(&self, hash: &gittree::Hash) -> io::Result<()> {
-		create_shard(&self.treecas_path, hash)
+		create_shard_for(&self.tree_path(hash))
+	}
+
+	/// Creates the shard dirs that `index_path` for this hash sits in, if they're not already there.
+	pub fn create_index_shard(&self, hash: &gittree::Hash) -> io::Result<()> {
+		create_shard_for(&self.index_path(hash))
 	}
 }
 
-/// The directory a CAS entry sits in: `{cas_root}/{ab}/{cd}`, from the first four hex chars of the hash.
-///
-/// Sharding keeps any one directory from accumulating millions of entries.
-/// The layout is specified in README_formats.md.
-fn shard_dir(cas_root: &Path, hash: &gittree::Hash) -> PathBuf {
-	let hex = hash.as_hex();
-	cas_root.join(&hex[0..2]).join(&hex[2..4])
-}
-
-/// Creates the two shard levels under `cas_root` for this hash.
+/// Creates the two shard levels that the CAS entry at `entry` sits in.
 ///
 /// Shard dirs are made lazily, as entries arrive, rather than all 65536 at init.
 /// Concurrent adds may race to make the same shard, and that's fine.
 /// Nothing above the shard levels is made: a missing CAS root stays an error.
-fn create_shard(cas_root: &Path, hash: &gittree::Hash) -> io::Result<()> {
-	let inner = shard_dir(cas_root, hash);
+fn create_shard_for(entry: &Path) -> io::Result<()> {
+	let inner = entry
+		.parent()
+		.expect("a CAS entry path sits two shard levels below its root");
 	let outer = inner
 		.parent()
-		.expect("shard_dir returns a path two levels below the root");
+		.expect("a CAS entry path sits two shard levels below its root");
 	create_dir_if_absent(outer)?;
-	create_dir_if_absent(&inner)
+	create_dir_if_absent(inner)
 }
 
 /// `fs::create_dir`, counting an already-present directory as success.
@@ -312,6 +318,8 @@ mod tests {
 		assert!(repo.blob_path(&h, false).parent().is_some_and(Path::is_dir));
 		repo.create_tree_shard(&h).expect("tree shard creation");
 		assert!(repo.tree_path(&h).parent().is_some_and(Path::is_dir));
+		repo.create_index_shard(&h).expect("index shard creation");
+		assert!(repo.index_path(&h).parent().is_some_and(Path::is_dir));
 	}
 
 	#[test]

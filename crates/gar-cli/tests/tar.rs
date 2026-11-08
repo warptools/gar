@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::{arg, gar, gar_bytes, scratch, treecas_entry};
+use common::{arg, gar, gar_bytes, scratch, treecas_entry, treeidx_entry};
 use rstest::rstest;
 use std::path::{Path, PathBuf};
 
@@ -64,6 +64,27 @@ fn round_trip_preserves_the_tree() {
 	let entry = treecas_entry(dst.path(), &hash);
 	let rehash = gar(dst.path(), &["hash", arg(&entry)]);
 	assert_eq!(rehash.stdout.trim(), hash, "stderr: {}", rehash.stderr);
+}
+
+/// Import stores through add, so the received tree gets its index too:
+/// the same bytes the sending heap's add wrote, since the format allows only one spelling per tree.
+#[test]
+fn import_writes_the_tree_index() {
+	let src = fresh_heap("tar-index-src");
+	let hash = plant_and_add(src.path());
+	let tarfile = export_to_file(src.path(), &hash, "specimen.tar");
+
+	let dst = fresh_heap("tar-index-dst");
+	let r = gar_bytes(dst.path(), &["import", "--expect", &hash], Some(&tarfile));
+	assert_eq!(r.code, 0, "import: stderr: {}", r.stderr);
+	let sent =
+		std::fs::read(treeidx_entry(src.path(), &hash)).expect("the sender's add wrote an index");
+	let received =
+		std::fs::read(treeidx_entry(dst.path(), &hash)).expect("the import wrote an index");
+	assert_eq!(
+		String::from_utf8_lossy(&received),
+		String::from_utf8_lossy(&sent)
+	);
 }
 
 /// The same tree exports as byte-identical tar, every time.
