@@ -1,6 +1,0 @@
-# Static builds (see `make static`) need no C toolchain at all:
-# every dependency is pure Rust, rust-std's musl component carries libc,
-# and rust-lld ships inside the rustup toolchain.
-# This pin is what spares the usual expectation of a musl-targeting C compiler as the linker driver.
-[target.x86_64-unknown-linux-musl]
-linker = "rust-lld"
