@@ -60,16 +60,30 @@ pub(crate) fn stage_blob<R: io::Read + ?Sized>(
 		.write(true)
 		.create_new(true)
 		.open(staged_path)?;
-	let size = io::copy(source, &mut staged)?;
-	// This is an fchmod, so the published mode is exact, umask notwithstanding.
-	// It must happen before publishing: a blobcas inode is never touched again.
+	io::copy(source, &mut staged)?;
+	seal_staged(&mut staged, executable)
+}
+
+/// Gives the staged file at `staged_path` the blobcas mode and hashes it, for a file that got there by hardlink rather than `stage_blob`.
+/// Returns the hash and size, ready for `place_blob`.
+/// The mode is set on the inode, so the file the link was made from takes it on too.
+pub(crate) fn seal_link(staged_path: &Path, executable: bool) -> io::Result<(gittree::Hash, u64)> {
+	seal_staged(&mut fs::File::open(staged_path)?, executable)
+}
+
+/// Sets the blobcas mode on `staged` and hashes its whole content.
+///
+/// This is an fchmod, so the published mode is exact, umask notwithstanding.
+/// It must happen before publishing: a blobcas inode is never touched again.
+fn seal_staged(staged: &mut fs::File, executable: bool) -> io::Result<(gittree::Hash, u64)> {
 	let mode = if executable {
 		repo::BLOB_MODE_EXEC
 	} else {
 		repo::BLOB_MODE
 	};
 	staged.set_permissions(fs::Permissions::from_mode(mode))?;
+	let size = staged.metadata()?.len();
 	staged.seek(io::SeekFrom::Start(0))?;
-	let hash = gittree::hash_of_stream(&mut staged, size)?;
+	let hash = gittree::hash_of_stream(staged, size)?;
 	Ok((hash, size))
 }
