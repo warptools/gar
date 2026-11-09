@@ -138,6 +138,14 @@ pub struct FetchCmd {
 	/// (the one that directly contains "blobcas" and "treeidx", which is usually a ".gar" directory).
 	#[arg(long, required = true)]
 	pub from: std::ffi::OsString,
+
+	/// a local file that may be one of the tree's blobs.  Repeatable.
+	/// One that hashes to a blob this heap lacks is hardlinked into the heap instead of being fetched,
+	/// and takes on the heap's read-only mode; the rest are only read.
+	/// Offer a file only if it will never be changed again: a change would corrupt the heap.
+	/// Must be a regular file on the heap's filesystem, or the whole fetch is refused.
+	#[arg(long = "offer")]
+	pub offers: Vec<PathBuf>,
 }
 
 /// Parses a treehash argument strictly, per `Hash::from_hex_strict`:

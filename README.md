@@ -186,6 +186,19 @@ or as a plain local path, which works just the same.
 Fetch reads the tree's treeidx file first, and then fetches only the blobs the local heap doesn't already hold,
 so a tree that mostly overlaps what you already have costs only the difference.
 
+Files of the tree that are already on this machine, outside any heap, can be offered:
+
+```
+gar fetch $hash --from https://elsewhere.example/.gar --offer ./downloads/tool --offer ./downloads/tool.1
+```
+
+An offer that hashes to a blob the heap lacks is hardlinked into the heap in place of fetching that blob,
+and takes on the blobcas mode (read-only, executable if the tree says so); it stays at its path, now sharing an inode with the heap.
+An offer that matches nothing the fetch needs is only read.
+Offer only files that will never be changed again: a change to one would be a change to the heap.
+An offer on another filesystem can't be hardlinked, and refuses the whole fetch rather than being copied.
+The summary on stderr says which offers were used.
+
 Fetch is trustless and fail-closed, like import.
 The index is checked by arithmetic before a single blob moves: if it doesn't recompute to the treehash asked for, nothing is fetched.
 Every blob is hashed as it lands, and nothing is stored under a name its bytes don't hash to.
