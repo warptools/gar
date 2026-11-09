@@ -8,6 +8,7 @@ gittree = { path = "../gittree" }
 tar.workspace = true
 tempdir.workspace = true
 ureq.workspace = true
+rustls-graviola.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true

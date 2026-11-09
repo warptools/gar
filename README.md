@@ -355,6 +355,10 @@ Run `make` to see all commands.
 Before committing anything, run `make all` (fmt, build, test).
 There should be no warning messages.
 
+`make static` builds a fully static `gar` binary.
+The whole dependency tree is pure Rust, and the static link is against the host's own libc,
+so this needs nothing beyond a toolchain that can build gar at all.
+
 
 License
 -------

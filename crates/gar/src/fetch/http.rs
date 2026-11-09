@@ -34,6 +34,14 @@ impl HttpTransport {
 	/// `base` is the URL of the heap's own directory (what the webserver serves as the `.gar` dir).
 	/// It's used as a plain prefix: relpaths are appended to it, so it shouldn't carry a query or fragment.
 	pub fn new(base: &str) -> Self {
+		// Rustls is built without a crypto provider (ureq's `rustls-no-provider`),
+		// and graviola is installed process-wide here instead.
+		// Graviola is pure Rust, which keeps gar's whole build C-free,
+		// and with it the toolchain needed to produce a static gar binary.
+		// Installing can fail only if a provider is already installed --
+		// ours on an earlier call, or an embedding application's own choice;
+		// either is a fine state to proceed in.
+		let _ = rustls_graviola::default_provider().install_default();
 		HttpTransport {
 			base: base.strip_suffix('/').unwrap_or(base).to_owned(),
 			agent: ureq::Agent::new_with_config(

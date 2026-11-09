@@ -20,7 +20,8 @@ clap = { version = "*", features = ["derive"] }
 io_tee = "*"
 rstest = "*"
 criterion = "*"
-ureq = { version = "*", default-features = false, features = ["rustls"] }
+ureq = { version = "*", default-features = false, features = ["rustls-no-provider", "rustls-webpki-roots"] }
+rustls-graviola = "*"
 
 # Build things that are actually usable.
 # I don't know what the compiler thinks it's doing without this, but it's Bad.
