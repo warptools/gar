@@ -44,7 +44,7 @@ fn an_index_with_a_mangled_dir_hash_is_refused_before_any_blob() {
 	.expect("write the mangled index");
 	let rec = recording_from(&remote);
 
-	let err = fetch::fetch_tree(&local, &rec, &hash).expect_err("a lying index");
+	let err = fetch::fetch_tree(&local, &rec, &hash, &[]).expect_err("a lying index");
 
 	match err {
 		FetchError::Refused {
@@ -79,7 +79,7 @@ fn an_index_for_another_tree_is_refused_before_any_blob() {
 	let local = heap(td.path(), "local");
 	let rec = recording_from(&remote);
 
-	let err = fetch::fetch_tree(&local, &rec, &hash).expect_err("the wrong tree");
+	let err = fetch::fetch_tree(&local, &rec, &hash, &[]).expect_err("the wrong tree");
 
 	match err {
 		FetchError::Refused {
@@ -110,7 +110,7 @@ fn a_corrupt_remote_blob_is_refused() {
 	let local = heap(td.path(), "local");
 	let rec = recording_from(&remote);
 
-	let err = fetch::fetch_tree(&local, &rec, &hash).expect_err("a corrupt blob");
+	let err = fetch::fetch_tree(&local, &rec, &hash, &[]).expect_err("a corrupt blob");
 
 	match err {
 		FetchError::Refused {
@@ -151,7 +151,8 @@ fn a_blob_the_remote_lacks_is_its_own_error() {
 	fs::remove_file(remote.repo_path().join(&gone)).expect("remove a remote blob");
 	let local = heap(td.path(), "local");
 
-	let err = fetch::fetch_tree(&local, &recording_from(&remote), &hash).expect_err("missing blob");
+	let err =
+		fetch::fetch_tree(&local, &recording_from(&remote), &hash, &[]).expect_err("missing blob");
 
 	match &err {
 		FetchError::BlobMissing {
@@ -174,7 +175,7 @@ fn an_absent_index_is_not_served() {
 	fs::remove_file(remote.index_path(&hash)).expect("remove the index");
 	let local = heap(td.path(), "local");
 
-	match fetch::fetch_tree(&local, &recording_from(&remote), &hash) {
+	match fetch::fetch_tree(&local, &recording_from(&remote), &hash, &[]) {
 		Err(FetchError::NotServed {
 			location: loc,
 		}) => assert_eq!(loc, location(&remote, &layout::index(&hash))),
@@ -196,7 +197,7 @@ fn a_body_past_its_claimed_size_is_cut_off_and_refused() {
 	let local = heap(td.path(), "local");
 	let rec = recording_from(&remote);
 
-	let err = fetch::fetch_tree(&local, &rec, &hash).expect_err("an overlong body");
+	let err = fetch::fetch_tree(&local, &rec, &hash, &[]).expect_err("an overlong body");
 
 	match err {
 		FetchError::Refused {
@@ -242,7 +243,7 @@ fn a_size_claim_that_isnt_the_blobs_size_is_refused() {
 		}
 		let rec = recording_from(&remote);
 
-		let err = fetch::fetch_tree(&local, &rec, &hash).expect_err(case);
+		let err = fetch::fetch_tree(&local, &rec, &hash, &[]).expect_err(case);
 
 		match err {
 			FetchError::Refused {
@@ -310,7 +311,7 @@ fn transport_failures_name_their_location() {
 			}),
 		};
 
-		let err = fetch::fetch_tree(&local, &*transport, &hash).expect_err(case);
+		let err = fetch::fetch_tree(&local, &*transport, &hash, &[]).expect_err(case);
 
 		assert!(
 			matches!(err, FetchError::Io(_)),

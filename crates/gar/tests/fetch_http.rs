@@ -27,7 +27,7 @@ fn full_fetch_over_http() {
 	let server = StaticServer::serve(td.path()).expect("can start a server");
 	let local = heap(td.path(), "local");
 
-	let outcome = fetch::fetch_tree(&local, &*http_transport(&server), &hash).expect("fetch");
+	let outcome = fetch::fetch_tree(&local, &*http_transport(&server), &hash, &[]).expect("fetch");
 
 	assert_eq!(
 		outcome,
@@ -35,6 +35,7 @@ fn full_fetch_over_http() {
 			blobs_fetched: 6,
 			bytes_fetched: 7 + 7 + 7 + 9 + 18 + BIG_SIZE as u64,
 			blobs_in_stock: 0,
+			offers_used: vec![],
 		}
 	);
 	assert_eq!(
@@ -56,7 +57,7 @@ fn an_index_404_is_not_served() {
 	let server = StaticServer::serve(td.path()).expect("can start a server");
 	let local = heap(td.path(), "local");
 
-	match fetch::fetch_tree(&local, &*http_transport(&server), &hash) {
+	match fetch::fetch_tree(&local, &*http_transport(&server), &hash, &[]) {
 		Err(FetchError::NotServed {
 			location,
 		}) => assert_eq!(

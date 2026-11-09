@@ -9,6 +9,7 @@ mod fetch_error;
 mod fetch_tree;
 mod http;
 mod local;
+mod offers;
 mod remote;
 mod transport;
 

@@ -28,7 +28,7 @@ fn full_fetch_into_an_empty_heap() {
 	let local = heap(td.path(), "local");
 	let rec = recording_from(&remote);
 
-	let outcome = fetch::fetch_tree(&local, &rec, &hash).expect("fetch succeeds");
+	let outcome = fetch::fetch_tree(&local, &rec, &hash, &[]).expect("fetch succeeds");
 
 	let remote_idx = remote_index(&remote, &hash);
 	let file_bytes: u64 = [7, 7, 7, 9, 18, BIG_SIZE as u64].iter().sum();
@@ -38,6 +38,7 @@ fn full_fetch_into_an_empty_heap() {
 			blobs_fetched: 6,
 			bytes_fetched: file_bytes,
 			blobs_in_stock: 0,
+			offers_used: vec![],
 		}
 	);
 
@@ -108,7 +109,7 @@ fn partial_stock_fetches_only_the_gap() {
 	add::add(&local, &partial, add::FaithMode::Copy).expect("add the partial tree");
 	let rec = recording_from(&remote);
 
-	let outcome = fetch::fetch_tree(&local, &rec, &hash).expect("fetch succeeds");
+	let outcome = fetch::fetch_tree(&local, &rec, &hash, &[]).expect("fetch succeeds");
 
 	assert_eq!(
 		outcome,
@@ -116,6 +117,7 @@ fn partial_stock_fetches_only_the_gap() {
 			blobs_fetched: 4,
 			bytes_fetched: 7 + 7 + 9 + 18,
 			blobs_in_stock: 2,
+			offers_used: vec![],
 		}
 	);
 	let opens: HashSet<String> = rec.opens().into_iter().collect();
@@ -148,7 +150,7 @@ fn a_tree_already_here_reads_nothing() {
 	assert_eq!(again, hash);
 	let rec = recording_from(&remote);
 
-	let outcome = fetch::fetch_tree(&local, &rec, &hash).expect("fetch succeeds");
+	let outcome = fetch::fetch_tree(&local, &rec, &hash, &[]).expect("fetch succeeds");
 
 	assert_eq!(outcome, Outcome::AlreadyInStock);
 	assert_eq!(rec.opens(), Vec::<String>::new());
@@ -160,10 +162,10 @@ fn fetch_is_idempotent() {
 	let td = scratch("fetch-twice");
 	let (remote, hash) = remote_with_specimen(td.path());
 	let local = heap(td.path(), "local");
-	fetch::fetch_tree(&local, &recording_from(&remote), &hash).expect("first fetch");
+	fetch::fetch_tree(&local, &recording_from(&remote), &hash, &[]).expect("first fetch");
 	let rec = recording_from(&remote);
 	assert_eq!(
-		fetch::fetch_tree(&local, &rec, &hash).expect("second fetch"),
+		fetch::fetch_tree(&local, &rec, &hash, &[]).expect("second fetch"),
 		Outcome::AlreadyInStock
 	);
 	assert_eq!(rec.opens(), Vec::<String>::new());
@@ -177,9 +179,9 @@ fn a_fetched_heap_serves_onward() {
 	let middle = heap(td.path(), "middle");
 	let last = heap(td.path(), "last");
 
-	fetch::fetch_tree(&middle, &recording_from(&remote), &hash).expect("first hop");
+	fetch::fetch_tree(&middle, &recording_from(&remote), &hash, &[]).expect("first hop");
 	let rec = recording_from(&middle);
-	let outcome = fetch::fetch_tree(&last, &rec, &hash).expect("second hop");
+	let outcome = fetch::fetch_tree(&last, &rec, &hash, &[]).expect("second hop");
 
 	assert!(matches!(
 		outcome,

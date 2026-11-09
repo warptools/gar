@@ -12,9 +12,10 @@ use std::fs;
 use std::io;
 use std::io::Read as _;
 use std::os::unix::ffi::OsStrExt as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::fetch_error::{FetchError, Rejection};
+use super::offers::Offers;
 use super::transport::{OpenError, Transport};
 use crate::blob_landing;
 use crate::index_landing;
@@ -38,14 +39,21 @@ pub enum Outcome {
 	AlreadyInStock,
 	/// The tree was fetched.  Blobs are counted as blobcas entries:
 	/// one per distinct content and exec bit, however many paths share it.
+	/// Blobs taken from offers are counted in neither number; `offers_used` names those offers.
 	Fetched {
 		blobs_fetched: usize,
 		bytes_fetched: u64,
 		blobs_in_stock: usize,
+		offers_used: Vec<PathBuf>,
 	},
 }
 
 /// Fetches the tree `hash` from `remote` into `repo`, fetching only the blobs `repo` lacks.
+///
+/// `offers` are local regular files on the heap's filesystem that the caller vouches will never change again.
+/// One that hashes to a blob the heap lacks is hardlinked into the blobcas instead of that blob being fetched,
+/// and so takes on the blobcas mode; the others are only read.
+/// An offer that isn't a regular file on the heap's filesystem fails the fetch.
 ///
 /// The repo's directories must exist (see `Repo::create`).
 /// On success the tree and its index are in the heap.
@@ -54,14 +62,16 @@ pub fn fetch_tree(
 	repo: &repo::Repo,
 	remote: &dyn Transport,
 	hash: &gittree::Hash,
+	offers: &[PathBuf],
 ) -> Result<Outcome, FetchError> {
 	// Presence means the entry directory exists, the same check `gar path` makes.
 	if repo.tree_path(hash).is_dir() {
 		return Ok(Outcome::AlreadyInStock);
 	}
 
+	let offers = Offers::gather(repo, offers)?;
 	let idx = fetch_index(remote, hash)?;
-	let outcome = stock_blobs(repo, remote, &idx)?;
+	let outcome = stock_blobs(repo, remote, &idx, offers)?;
 	let wiptree = tree_landing::new_wiptree(repo)?;
 	materialize(repo, &idx, wiptree.path())?;
 	tree_landing::commit_tree(repo, &wiptree, hash)?;
@@ -69,12 +79,14 @@ pub fn fetch_tree(
 	Ok(outcome)
 }
 
-/// Gets every blob the index names into the local blobcas, fetching only those not already there,
+/// Gets every blob the index names into the local blobcas, taking an offer for it when one matches
+/// and fetching only those neither in stock nor offered,
 /// and checks every size claim the index makes against the blob's true size.
 fn stock_blobs(
 	repo: &repo::Repo,
 	remote: &dyn Transport,
 	idx: &treeidx::TreeIdx,
+	mut offers: Offers,
 ) -> Result<Outcome, FetchError> {
 	// Each fetched blob is staged here before publishing; it's removed on return, success or not.
 	let staging = tempdir::TempDir::new_in(repo.repo_path(), ".staging-fetch-")?;
@@ -103,11 +115,16 @@ fn stock_blobs(
 					},
 					None => {
 						let staged = staging.path().join("staged");
-						let actual =
-							fetch_blob(repo, remote, blob, *executable, *claimed, &staged)?;
-						blobs_fetched += 1;
-						bytes_fetched += actual;
-						actual
+						match offers.link_in(repo, blob, *executable, &staged)? {
+							Some(actual) => actual,
+							None => {
+								let actual =
+									fetch_blob(repo, remote, blob, *executable, *claimed, &staged)?;
+								blobs_fetched += 1;
+								bytes_fetched += actual;
+								actual
+							},
+						}
 					},
 				};
 				sizes.insert(key, actual);
@@ -132,6 +149,7 @@ fn stock_blobs(
 		blobs_fetched,
 		bytes_fetched,
 		blobs_in_stock,
+		offers_used: offers.used,
 	})
 }
 
