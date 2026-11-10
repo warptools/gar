@@ -10,7 +10,7 @@ mod static_server;
 use common::{arg, gar, scratch, treecas_entry, treeidx_entry};
 use static_server::StaticServer;
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::Path;
 
 /// Makes heaps at `root/remote` (holding a small tree, returned by hash) and `root/local` (empty).
@@ -144,4 +144,51 @@ fn fetch_with_a_blob_missing_remotely_exits_6() {
 		"{}",
 		r.stderr
 	);
+}
+
+/// Offers: stderr says which were used; a used one is the blobcas inode, an unused one is left alone.
+#[test]
+fn fetch_with_offers_reports_each() {
+	let td = scratch("cli-fetch-offer");
+	let hash = remote_and_local(td.path());
+	let local = td.path().join("local");
+	let offers = td.path().join("offers");
+	fs::create_dir(&offers).expect("mkdir");
+	fs::write(offers.join("file"), b"content\n").expect("write");
+	fs::write(offers.join("stray"), b"nobody's\n").expect("write");
+	let blob = gar(&td.path().join("remote"), &["hash", "tree/file"])
+		.stdout
+		.trim()
+		.to_owned();
+
+	let r = gar(
+		&local,
+		&[
+			"fetch",
+			"--from",
+			arg(&td.path().join("remote/.gar")),
+			"--offer",
+			arg(&offers.join("file")),
+			"--offer",
+			arg(&offers.join("stray")),
+			&hash,
+		],
+	);
+
+	assert_eq!(r.code, 0, "stderr: {}", r.stderr);
+	assert_eq!(
+		r.stderr,
+		format!(
+			"fetch: fetched 1 blobs (10 bytes); 0 blobs already in stock\nfetch: offer {}: used\nfetch: offer {}: not used\n",
+			offers.join("file").display(),
+			offers.join("stray").display()
+		)
+	);
+	assert_eq!(
+		fs::metadata(offers.join("file")).expect("stat").ino(),
+		fs::metadata(common::blobcas_entry(&local, &blob))
+			.expect("stat")
+			.ino()
+	);
+	assert_eq!(fs::metadata(offers.join("stray")).expect("stat").nlink(), 1);
 }

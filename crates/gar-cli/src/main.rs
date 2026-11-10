@@ -324,7 +324,7 @@ fn main() {
 				},
 			};
 			// Stdout gets the tree's path and nothing else, as `gar path` prints it: scripts chain on it.
-			match fetch::fetch_tree(&repo, &*remote, &args.hash) {
+			match fetch::fetch_tree(&repo, &*remote, &args.hash, &args.offers) {
 				Ok(outcome) => {
 					match outcome {
 						fetch::Outcome::AlreadyInStock => {
@@ -337,10 +337,19 @@ fn main() {
 							blobs_fetched,
 							bytes_fetched,
 							blobs_in_stock,
+							offers_used,
 						} => {
 							eprintln!(
 								"fetch: fetched {blobs_fetched} blobs ({bytes_fetched} bytes); {blobs_in_stock} blobs already in stock"
 							);
+							for offer in &args.offers {
+								let fate = if offers_used.contains(offer) {
+									"used"
+								} else {
+									"not used"
+								};
+								eprintln!("fetch: offer {}: {fate}", offer.display());
+							}
 						},
 					}
 					println!("{}", repo.tree_path(&args.hash).display());
