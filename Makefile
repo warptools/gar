@@ -41,12 +41,14 @@ clean: ## Remove this workspace's build outputs (scoped: the target dir may be s
 
 # Static linking against the host's own libc, so any toolchain that builds gar at all can build this:
 # no extra std components, no extra tools, and (as everywhere in gar) no C is compiled.
-# The explicit --target is load-bearing even though it names the host:
-# it keeps RUSTFLAGS off build scripts and proc macros, which must stay host-dynamic.
+# Built against musl: a fully self-contained libc.  (A glibc-static binary
+# carries its builder's glibc, whose startup CPU probe proved able to SIGFPE
+# outright on machines unlike the builder.)  Zero C dependencies means no
+# cross toolchain is needed: rust ships the musl libc itself.
 .PHONY: static
 static: ## Build a statically linked release binary.
-	t=$$(rustc -vV | sed -n 's/^host: //p') \
-	&& RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target "$$t" -p gar-cli \
+	t=$$(rustc -vV | sed -n 's/^host: //p' | sed 's/-gnu$$/-musl/') \
+	&& cargo build --release --target "$$t" -p gar-cli \
 	&& echo "binary: $${CARGO_TARGET_DIR:-target}/$$t/release/gar"
 
 # `--locked` because `cargo install --path` otherwise ignores Cargo.lock and resolves everything afresh.
